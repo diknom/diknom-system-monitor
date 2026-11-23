@@ -218,7 +218,8 @@ Pemasang akan:
 4. Memilih interpreter Python yang benar-benar memiliki tkinter + psutil.
 5. Memasang aplikasi, ikon, dan menu desktop.
 
-Default-nya **user-local, tanpa root**:
+Aplikasi dipasang secara **user-local**; hanya langkah pemasangan dependensi
+yang mungkin meminta password sudo:
 
 - `~/.local/bin/diknom-monitor` — wrapper launcher
 - `~/.local/share/diknom-monitor/diknom-monitor` — aplikasi
