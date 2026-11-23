@@ -1,0 +1,3440 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""DikNom System Monitor - monitor sistem ringan berbasis tkinter.
+
+Menampilkan CPU total + per core/thread, suhu, RAM, ZRAM, swap,
+disk, jaringan, informasi hardware, dan daftar proses (RAM/CPU).
+"""
+import json
+import locale
+import os
+import platform
+import re
+import subprocess
+import sys
+import threading
+import time
+from collections import deque
+
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import ttk, messagebox
+
+import psutil
+
+APP_NAME = "DikNom System Monitor"
+VERSION = "1.0"
+HOME = os.path.expanduser("~")
+CFG_DIR = os.path.join(HOME, ".config", "diknom-monitor")
+CFG_PATH = os.path.join(CFG_DIR, "config.json")
+ICON_PATH = os.path.join(HOME, ".local", "share", "icons", "diknom-monitor.png")
+
+
+def find_icon_path():
+    xdg = os.environ.get("XDG_DATA_HOME", os.path.join(HOME, ".local", "share"))
+    candidates = [
+        ICON_PATH,
+        os.path.join(xdg, "icons", "diknom-monitor.png"),
+        os.path.join(xdg, "icons", "hicolor", "128x128", "apps",
+                     "diknom-monitor.png"),
+        "/usr/local/share/icons/diknom-monitor.png",
+        "/usr/share/icons/diknom-monitor.png",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return ""
+
+# Palet warna (tema gelap, mengikuti mockup)
+BG = "#0d1117"
+PANEL_BG = "#0a0e13"
+CARD = "#161b22"
+CARD_DARK = "#11161d"
+BORDER = "#26303c"
+TRACK = "#21262d"
+TEXT = "#e6edf3"
+MUTED = "#8b949e"
+DIM = "#6e7681"
+GREEN = "#3fb950"
+BLUE = "#58a6ff"
+PURPLE = "#a371f7"
+ORANGE = "#d29922"
+TEAL = "#2dd4bf"
+PINK = "#f85149"
+YELLOW = "#e3b341"
+ACCENT = "#1f6feb"
+ACCENT_HOVER = "#388bfd"
+
+FONT = "Noto Sans"
+MONO = "Noto Sans Mono"
+
+# ---------------------------------------------------------------------------
+# Bahasa / internasionalisasi
+# ---------------------------------------------------------------------------
+LANG = "id"
+
+EN = {
+    # Navigasi & branding
+    "Performa": "Performance",
+    "Info Perangkat": "Hardware Info",
+    "Proses": "Processes",
+    "Penyimpanan": "Storage",
+    "Jaringan": "Network",
+    "Pengaturan": "Settings",
+    "Tentang": "About",
+    "Monitor Sistem": "System Monitor",
+    "Monitor  •  Analisis": "Monitor  •  Analyze",
+    "Monitor • Analisis • Optimasi": "Monitor • Analyze • Optimize",
+    "Monitoring aktif": "Monitoring active",
+    "Interval": "Interval",
+    "dtk": "sec",
+    "Tentang Aplikasi": "About Application",
+
+    # Kartu & panel
+    "Informasi CPU": "CPU Information",
+    "Beban per Core / Thread": "Load per Core / Thread",
+    "Suhu Sistem": "System Temperature",
+    "Informasi Disk": "Disk Information",
+    "Informasi Jaringan": "Network Information",
+    "Informasi Baterai": "Battery Information",
+    "Penggunaan CPU": "CPU Usage",
+    "Baca": "Read",
+    "Tulis": "Write",
+    "Terpakai": "Used",
+    "Bebas": "Free",
+    "tersedia": "available",
+    "rasio": "ratio",
+    "di RAM": "in RAM",
+    "dari": "of",
+    "total": "total",
+    "Sumber:": "Source:",
+    "Sumber": "Source",
+    "Suhu": "Temperature",
+
+    # CPU / hardware
+    "Nama": "Name",
+    "Arsitektur": "Architecture",
+    "Core fisik": "Physical cores",
+    "core fisik": "physical cores",
+    "tanpa HT": "no HT",
+    "Thread": "Threads",
+    "Base Clock": "Base Clock",
+    "Boost Clock": "Boost Clock",
+    "Clock Dasar": "Base Clock",
+    "Clock Boost": "Boost Clock",
+    "Clock dasar": "Base clock",
+    "Clock boost": "Boost clock",
+    "Cache L1": "L1 Cache",
+    "Cache L2": "L2 Cache",
+    "Cache L3": "L3 Cache",
+    "Governor": "Governor",
+    "Prosesor": "Processor",
+    "Memori": "Memory",
+    "Sistem & Perangkat": "System & Device",
+    "Penyimpanan & Grafis": "Storage & Graphics",
+    "Baterai": "Battery",
+    "Model": "Model",
+    "Tipe": "Type",
+    "RAM total": "Total RAM",
+    "Tersedia": "Available",
+    "Cache/buffer": "Cache/buffer",
+    "Swap total": "Total swap",
+    "Swap terpakai": "Swap used",
+    "ZRAM tidak aktif": "ZRAM inactive",
+    "Modul": "Module",
+    "Produk": "Product",
+    "Vendor": "Vendor",
+    "Motherboard": "Motherboard",
+    "BIOS": "BIOS",
+    "Kernel": "Kernel",
+    "Sistem operasi": "Operating system",
+    "Desktop": "Desktop",
+    "Hostname": "Hostname",
+    "eMMC": "eMMC",
+    "Root": "Root",
+    "GPU": "GPU",
+    "Sensor suhu": "Temperature sensor",
+    "Tidak terdeteksi": "Not detected",
+    "Tidak ada baterai terdeteksi.": "No battery detected.",
+    "Tidak tersedia": "Not available",
+    "4 GB tersolder (tidak bisa upgrade)": "4 GB soldered (not upgradeable)",
+    "eMMC (tersolder)": "eMMC (soldered)",
+
+    # Baterai
+    "Status": "Status",
+    "Sumber daya": "Power source",
+    "Persentase": "Percentage",
+    "Kesehatan": "Health",
+    "Kapasitas": "Capacity",
+    "Daya": "Power",
+    "Tegangan": "Voltage",
+    "Arus": "Current",
+    "Charger": "Charger",
+    "Sisa waktu": "Time left",
+    "Sisa energi": "Remaining energy",
+    "Desain": "Design",
+    "Kap. desain": "Design capacity",
+    "Kap. penuh": "Full capacity",
+    "Penuh": "Full",
+    "Tersisa": "Remaining",
+    "Siklus": "Cycles",
+    "Teknologi": "Technology",
+    "Pabrikan": "Manufacturer",
+    "Mengisi daya": "Charging",
+    "Memakai baterai": "On battery",
+    "Tidak mengisi": "Not charging",
+    "Tersambung (AC)": "Connected (AC)",
+    "Tidak (Baterai)": "No (Battery)",
+    "Tersambung": "Connected",
+    "Tidak tersambung": "Not connected",
+    "AC / adaptor": "AC / adapter",
+    "Tidak terbatas (AC)": "Unlimited (AC)",
+    "Baik": "Good",
+    "Cukup": "Fair",
+    "Perlu perhatian": "Needs attention",
+    "Lemah": "Weak",
+    "Tidak terdeteksi.": "Not detected.",
+
+    # Penyimpanan & jaringan
+    "Ringkasan Penyimpanan": "Storage Summary",
+    "Partisi & Mount": "Partitions & Mounts",
+    "Perangkat": "Device",
+    "Mount": "Mount",
+    "Sistem file": "File system",
+    "Total": "Total",
+    "Pakai": "Usage",
+    "Aktivitas Disk": "Disk Activity",
+    "Koneksi Aktif": "Active Connection",
+    "Antarmuka": "Interface",
+    "Antarmuka Jaringan": "Network Interfaces",
+    "Detail Wi-Fi": "Wi-Fi Details",
+    "SSID": "SSID",
+    "Sinyal": "Signal",
+    "Frekuensi": "Frequency",
+    "Kecepatan link": "Link speed",
+    "Kecepatan": "Speed",
+    "Diterima": "Received",
+    "Dikirim": "Sent",
+    "Bukan koneksi Wi-Fi": "Not a Wi-Fi connection",
+    "sinyal": "signal",
+    "Kanal": "Channel",
+    "Wi-Fi": "Wi-Fi",
+    "IPv4": "IPv4",
+    "MAC": "MAC",
+
+    # Proses
+    "Proses Sistem": "System Processes",
+    "Memuat…": "Loading…",
+    "Cari": "Search",
+    "Akhiri Tugas": "End Task",
+    "Segarkan": "Refresh",
+    "klik judul kolom untuk mengurutkan": "click a column header to sort",
+    "Pengguna": "User",
+    "proses": "processes",
+    "Pemakan RAM teratas:": "Top RAM consumers:",
+    "Diperbarui": "Updated",
+    "CPU % dihitung terhadap total seluruh core. Daftar diperbarui tiap 2 detik.":
+        "CPU % is relative to all CPU cores. The list refreshes every 2 seconds.",
+    "Pilih satu proses dulu.": "Select a process first.",
+    "Proses ini dilindungi dan tidak bisa diakhiri.":
+        "This process is protected and cannot be ended.",
+    "Akhiri tugas": "End task",
+    "Ya, akhiri": "Yes, end it",
+    "Batal": "Cancel",
+    "Tutup": "Close",
+    "Detail proses": "Process details",
+    "Gagal mengakhiri proses": "Failed to end process",
+    "Detail": "Details",
+    "RAM (RSS)": "RAM (RSS)",
+    "CPU waktu": "CPU time",
+    "Command": "Command",
+
+    # Pengaturan
+    "Bahasa": "Language",
+    "Otomatis (sistem)": "Automatic (system)",
+    "Otomatis": "Automatic",
+    "Indonesia": "Indonesia",
+    "English": "English",
+    "Interval pembaruan": "Refresh interval",
+    "1 detik": "1 second",
+    "2 detik": "2 seconds",
+    "3 detik": "3 seconds",
+    "Riwayat grafik": "Graph history",
+    "45 titik": "45 points",
+    "60 titik": "60 points",
+    "120 titik": "120 points",
+    "Selalu di atas jendela lain": "Always on top",
+    "Sembunyikan thread kernel di daftar proses":
+        "Hide kernel threads in the process list",
+    "Ambang suhu peringatan": "Temperature warning threshold",
+    "Pengaturan disimpan otomatis di ~/.config/diknom-monitor/config.json":
+        "Settings are saved automatically to ~/.config/diknom-monitor/config.json",
+    "Versi": "Version",
+    "Monitor ringan untuk Linux": "Lightweight monitor for Linux",
+    "Pengembang: DikNom": "Developer: DikNom",
+    "Dikembangkan oleh DikNom.": "Developed by DikNom.",
+    "Tidak ada server lokal, tidak ada Electron.": "No local server, no Electron.",
+    "Pintasan": "Shortcuts",
+}
+
+STATUS_EN = {
+    "Berjalan": "Running",
+    "Tidur": "Sleeping",
+    "Tidur disk": "Disk sleep",
+    "Berhenti": "Stopped",
+    "Trace": "Tracing",
+    "Zombie": "Zombie",
+    "Mati": "Dead",
+    "Bangun": "Waking",
+    "Idle": "Idle",
+    "Terkunci": "Locked",
+    "Menunggu": "Waiting",
+    "Suspend": "Suspended",
+    "Parkir": "Parked",
+}
+
+
+def tr(text):
+    if LANG == "en" and isinstance(text, str):
+        return EN.get(text, text)
+    return text
+
+
+def system_language():
+    loc = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES")
+           or os.environ.get("LANG") or "")
+    if not loc:
+        try:
+            loc = locale.getlocale()[0] or ""
+        except Exception:
+            loc = ""
+    return "id" if loc.lower().startswith("id") else "en"
+
+
+def resolve_language(setting):
+    if setting in ("id", "en"):
+        return setting
+    return system_language()
+
+
+LANG = system_language()
+OS_NAME = platform.system()
+ROOT_MOUNT = "/" if os.name != "nt" else (os.environ.get("SystemDrive", "C:") + "\\")
+_BAT_STATIC = None
+
+CORE_COLORS = [GREEN, BLUE, PURPLE, ORANGE, TEAL, PINK, YELLOW, BLUE]
+
+PAGES = [
+    ("performance", "Performa", "gauge"),
+    ("hardware", "Info Perangkat", "cpu"),
+    ("processes", "Proses", "list"),
+    ("storage", "Penyimpanan", "disk"),
+    ("network", "Jaringan", "net"),
+    ("settings", "Pengaturan", "gear"),
+    ("about", "Tentang", "info"),
+]
+
+DEFAULTS = {
+    "interval": 1,
+    "history": 60,
+    "ontop": False,
+    "hide_kernel": True,
+    "temp_warn": 80,
+    "width": 1268,
+    "height": 760,
+    "page": "performance",
+    "language": "auto",
+}
+
+
+# ----------------------------------------------------------------------------
+# Helper
+# ----------------------------------------------------------------------------
+def read(path, default=""):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except Exception:
+        return default
+
+
+def read_int(path, default=0):
+    try:
+        return int(read(path, str(default)))
+    except Exception:
+        return default
+
+
+def fnum(value, dec=1):
+    """Format angka sesuai bahasa aktif (koma untuk Indonesia)."""
+    try:
+        s = f"{float(value):,.{dec}f}"
+    except Exception:
+        return str(value)
+    if LANG == "en":
+        return s
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def hbytes(n, dec=1):
+    try:
+        n = float(n)
+    except Exception:
+        return "-"
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    i = 0
+    while n >= 1024 and i < len(units) - 1:
+        n /= 1024.0
+        i += 1
+    if i == 0:
+        return f"{int(n)} B"
+    return f"{fnum(n, dec)} {units[i]}"
+
+
+def speed(n):
+    return hbytes(n, 1) + "/s"
+
+
+def cache_fmt(size):
+    s = (size or "").strip()
+    if not s:
+        return "-"
+    try:
+        if s.endswith("K"):
+            kb = int(s[:-1])
+            if kb >= 1024:
+                return fnum(kb / 1024.0, 0) + " MB"
+        if s.endswith("M"):
+            return s.replace("M", " MB")
+    except Exception:
+        pass
+    return s
+
+
+def ghz(mhz):
+    if not mhz:
+        return "-"
+    if mhz >= 1000:
+        return fnum(mhz / 1000.0, 2) + " GHz"
+    return f"{int(mhz)} MHz"
+
+
+def durasi(seconds):
+    seconds = int(max(0, seconds))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if LANG == "en":
+        if days:
+            return f"{days} d {hours} h"
+        if hours:
+            return f"{hours} h {mins} m"
+        return f"{mins} min"
+    if days:
+        return f"{days} hari {hours} jam"
+    if hours:
+        return f"{hours} jam {mins} menit"
+    return f"{mins} menit"
+
+
+def temp_color(t, warn=80):
+    if t is None:
+        return MUTED
+    if t >= warn:
+        return PINK
+    if t >= warn - 15:
+        return ORANGE
+    return GREEN
+
+
+def mix(c1, c2, t):
+    """Campur dua warna hex, t=0 -> c1, t=1 -> c2."""
+    try:
+        a = tuple(int(c1[i:i + 2], 16) for i in (1, 3, 5))
+        b = tuple(int(c2[i:i + 2], 16) for i in (1, 3, 5))
+        c = tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+        return "#%02x%02x%02x" % c
+    except Exception:
+        return c1
+
+
+def round_rect(canvas, x1, y1, x2, y2, r, **kw):
+    points = [
+        x1 + r, y1, x2 - r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+        x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1 + r,
+        x1, y1, x1 + r, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kw)
+
+
+def run_cmd(cmd, timeout=3):
+    try:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, timeout=timeout).stdout.strip()
+    except Exception:
+        return ""
+
+
+def powershell(command, timeout=5):
+    if OS_NAME != "Windows":
+        return ""
+    return run_cmd(["powershell", "-NoProfile", "-NonInteractive",
+                    "-Command", command], timeout=timeout)
+
+
+def choose_fonts(root):
+    """Pilih font yang tersedia di OS aktif."""
+    global FONT, MONO
+    try:
+        families = set(tkfont.families(root))
+    except Exception:
+        return
+    for candidate in ("Noto Sans", "Segoe UI", "Helvetica Neue",
+                      "DejaVu Sans", "Liberation Sans", "Arial"):
+        if candidate in families:
+            FONT = candidate
+            break
+    for candidate in ("Noto Sans Mono", "Cascadia Mono", "Consolas", "Menlo",
+                      "DejaVu Sans Mono", "Liberation Mono", "Courier New"):
+        if candidate in families:
+            MONO = candidate
+            break
+
+
+# ----------------------------------------------------------------------------
+# Ikon digambar langsung di Canvas (tanpa file gambar)
+# ----------------------------------------------------------------------------
+def draw_icon(c, kind, x, y, s, color, lw=None):
+    lw = lw or max(1, int(round(s / 10.0)))
+
+    def line(*a, **k):
+        k.setdefault("fill", color)
+        k.setdefault("width", lw)
+        k.setdefault("capstyle", "round")
+        return c.create_line(*a, **k)
+
+    def rect(x1, y1, x2, y2, **k):
+        k.setdefault("outline", color)
+        k.setdefault("width", lw)
+        return c.create_rectangle(x + x1 * s, y + y1 * s, x + x2 * s, y + y2 * s, **k)
+
+    def oval(x1, y1, x2, y2, **k):
+        k.setdefault("outline", color)
+        k.setdefault("width", lw)
+        return c.create_oval(x + x1 * s, y + y1 * s, x + x2 * s, y + y2 * s, **k)
+
+    if kind == "cpu":
+        rect(.24, .24, .76, .76)
+        rect(.40, .40, .60, .60)
+        for k in (.34, .50, .66):
+            line(x + k * s, y + .10 * s, x + k * s, y + .24 * s)
+            line(x + k * s, y + .76 * s, x + k * s, y + .90 * s)
+            line(x + .10 * s, y + k * s, x + .24 * s, y + k * s)
+            line(x + .76 * s, y + k * s, x + .90 * s, y + k * s)
+    elif kind == "ram":
+        rect(.08, .34, .92, .66)
+        for k in (.30, .50, .70):
+            line(x + k * s, y + .34 * s, x + k * s, y + .66 * s)
+        for k in (.18, .34, .50, .66, .82):
+            line(x + k * s, y + .66 * s, x + k * s, y + .84 * s)
+    elif kind == "zram":
+        rect(.16, .16, .84, .42)
+        rect(.16, .50, .84, .76)
+        line(x + .30 * s, y + .60 * s, x + .70 * s, y + .60 * s)
+        line(x + .30 * s, y + .67 * s, x + .70 * s, y + .67 * s)
+    elif kind == "swap":
+        line(x + .16 * s, y + .38 * s, x + .80 * s, y + .38 * s)
+        line(x + .68 * s, y + .26 * s, x + .82 * s, y + .38 * s)
+        line(x + .68 * s, y + .50 * s, x + .82 * s, y + .38 * s)
+        line(x + .84 * s, y + .62 * s, x + .20 * s, y + .62 * s)
+        line(x + .32 * s, y + .50 * s, x + .18 * s, y + .62 * s)
+        line(x + .32 * s, y + .74 * s, x + .18 * s, y + .62 * s)
+    elif kind == "disk":
+        oval(.18, .10, .82, .32)
+        line(x + .18 * s, y + .21 * s, x + .18 * s, y + .78 * s)
+        line(x + .82 * s, y + .21 * s, x + .82 * s, y + .78 * s)
+        c.create_arc(x + .18 * s, y + .67 * s, x + .82 * s, y + .89 * s,
+                     start=180, extent=180, style="arc", outline=color, width=lw)
+        line(x + .40 * s, y + .21 * s, x + .60 * s, y + .21 * s)
+    elif kind == "net":
+        oval(.10, .10, .90, .90)
+        line(x + .10 * s, y + .50 * s, x + .90 * s, y + .50 * s)
+        oval(.32, .10, .68, .90)
+    elif kind == "temp":
+        line(x + .54 * s, y + .10 * s, x + .54 * s, y + .62 * s, width=lw + 1)
+        oval(.36, .56, .72, .92)
+        c.create_oval(x + .44 * s, y + .64 * s, x + .64 * s, y + .84 * s,
+                      fill=color, outline="")
+        line(x + .66 * s, y + .26 * s, x + .78 * s, y + .26 * s)
+        line(x + .66 * s, y + .40 * s, x + .78 * s, y + .40 * s)
+    elif kind == "gear":
+        oval(.30, .30, .70, .70)
+        import math
+        for i in range(8):
+            a = math.radians(i * 45)
+            r1, r2 = .24, .40
+            line(x + (.5 + r1 * math.cos(a)) * s, y + (.5 + r1 * math.sin(a)) * s,
+                 x + (.5 + r2 * math.cos(a)) * s, y + (.5 + r2 * math.sin(a)) * s)
+    elif kind == "list":
+        for k in (.24, .50, .76):
+            c.create_oval(x + .12 * s, y + (k - .035) * s, x + .19 * s, y + (k + .035) * s,
+                          fill=color, outline="")
+            line(x + .30 * s, y + k * s, x + .88 * s, y + k * s)
+    elif kind == "gauge":
+        c.create_arc(x + .10 * s, y + .14 * s, x + .90 * s, y + .94 * s,
+                     start=210, extent=-240, style="arc", outline=color, width=lw)
+        line(x + .50 * s, y + .58 * s, x + .72 * s, y + .30 * s)
+        c.create_oval(x + .45 * s, y + .53 * s, x + .55 * s, y + .63 * s,
+                      fill=color, outline="")
+    elif kind == "home":
+        line(x + .12 * s, y + .48 * s, x + .50 * s, y + .12 * s, x + .88 * s, y + .48 * s)
+        line(x + .22 * s, y + .44 * s, x + .22 * s, y + .86 * s, x + .78 * s, y + .86 * s,
+             x + .78 * s, y + .44 * s)
+    elif kind == "battery":
+        rect(.08, .30, .80, .70)
+        rect(.80, .40, .90, .60)
+        for x1 in (.16, .38, .60):
+            c.create_rectangle(x + x1 * s, y + .38 * s,
+                               x + (x1 + .16) * s, y + .62 * s,
+                               fill=color, outline="")
+    elif kind == "info":
+        oval(.12, .12, .88, .88)
+        c.create_oval(x + .46 * s, y + .26 * s, x + .54 * s, y + .34 * s,
+                      fill=color, outline="")
+        line(x + .50 * s, y + .44 * s, x + .50 * s, y + .72 * s, width=lw + 1)
+    return c
+
+
+def make_icon(parent, kind, size=16, color=MUTED, bg=CARD):
+    c = tk.Canvas(parent, width=size, height=size, bg=bg,
+                  highlightthickness=0, bd=0)
+    draw_icon(c, kind, 0, 0, size, color)
+    return c
+
+
+def draw_monitor(c, x, y, w, h, color, accent=GREEN):
+    c.create_rectangle(x, y, x + w, y + h * .70, outline=color, width=2)
+    c.create_line(x + w * .40, y + h * .70, x + w * .40, y + h * .86,
+                  fill=color, width=2)
+    c.create_line(x + w * .60, y + h * .70, x + w * .60, y + h * .86,
+                  fill=color, width=2)
+    c.create_line(x + w * .26, y + h * .86, x + w * .74, y + h * .86,
+                  fill=color, width=2)
+    pts = []
+    import math
+    for i in range(28):
+        px = x + w * .10 + (w * .80) * i / 27.0
+        py = y + h * .36 - math.sin(i / 3.3) * h * .10
+        pts.extend([px, py])
+    c.create_line(*pts, fill=accent, width=2, smooth=True)
+
+
+# ----------------------------------------------------------------------------
+# Widget kustom
+# ----------------------------------------------------------------------------
+_BaseLabel = tk.Label
+_BaseButton = tk.Button
+
+
+class TrLabel(_BaseLabel):
+    """Label yang otomatis diterjemahkan saat dibuat/diubah."""
+
+    def __init__(self, master=None, **kw):
+        if "text" in kw:
+            kw["text"] = tr(kw["text"])
+        super().__init__(master, **kw)
+
+    def configure(self, cnf=None, **kw):
+        if isinstance(cnf, dict):
+            cnf = dict(cnf)
+            if "text" in cnf:
+                cnf["text"] = tr(cnf["text"])
+        if "text" in kw:
+            kw["text"] = tr(kw["text"])
+        return super().configure(cnf, **kw)
+
+    config = configure
+
+
+class TrButton(_BaseButton):
+    """Tombol yang otomatis diterjemahkan."""
+
+    def __init__(self, master=None, **kw):
+        if "text" in kw:
+            kw["text"] = tr(kw["text"])
+        super().__init__(master, **kw)
+
+    def configure(self, cnf=None, **kw):
+        if isinstance(cnf, dict):
+            cnf = dict(cnf)
+            if "text" in cnf:
+                cnf["text"] = tr(cnf["text"])
+        if "text" in kw:
+            kw["text"] = tr(kw["text"])
+        return super().configure(cnf, **kw)
+
+    config = configure
+
+
+tk.Label = TrLabel
+tk.Button = TrButton
+
+
+class Card(tk.Frame):
+    def __init__(self, parent, **kw):
+        kw.setdefault("bg", CARD)
+        super().__init__(parent, highlightbackground=BORDER, highlightthickness=1,
+                         bd=0, **kw)
+
+
+class Spark(tk.Canvas):
+    """Grafik garis ringan (polyline + area), tanpa library tambahan."""
+
+    def __init__(self, parent, color, maxval=None, points=90, height=54, bg=CARD):
+        super().__init__(parent, bg=bg, height=height, highlightthickness=0, bd=0)
+        self.color = color
+        self.maxval = maxval
+        self.bg = bg
+        self.values = deque(maxlen=int(points))
+        self._line = None
+        self._fill = None
+        self.bind("<Configure>", lambda e: self.redraw())
+
+    def set_points(self, n):
+        self.values = deque(self.values, maxlen=max(10, int(n)))
+        self.redraw()
+
+    def push(self, value):
+        try:
+            v = float(value)
+        except Exception:
+            v = 0.0
+        if not self.values and self.values.maxlen:
+            self.values.extend([0.0] * (self.values.maxlen - 1))
+        self.values.append(v)
+        if self.winfo_ismapped():
+            self.redraw()
+
+    def _ensure(self):
+        if self._line is None:
+            self._fill = self.create_polygon(0, 0, 0, 0, 0, 0,
+                                             fill=mix(self.color, self.bg, .62),
+                                             outline="", smooth=True,
+                                             splinesteps=10)
+            self._line = self.create_line(0, 0, 0, 0, fill=self.color,
+                                          width=2, capstyle="round",
+                                          joinstyle="round", smooth=True,
+                                          splinesteps=12)
+
+    def redraw(self):
+        w = max(self.winfo_width(), 2)
+        h = max(self.winfo_height(), 2)
+        if w <= 2 or h <= 2:
+            return
+        self._ensure()
+        vals = list(self.values)
+        if not vals:
+            self.coords(self._line, 0, h, 0, h)
+            self.coords(self._fill, 0, h, w, h, w, h)
+            return
+        mx = self.maxval if self.maxval else max(max(vals) * 1.25, 1e-9)
+        n = len(vals)
+        cap = self.values.maxlen or n
+        step = w / max(1, cap - 1)
+        x0 = w - (n - 1) * step
+        pts = []
+        for i, v in enumerate(vals):
+            px = x0 + i * step
+            py = h - 3 - min(max(float(v), 0) / mx, 1.0) * (h - 6)
+            pts.extend([px, py])
+        if n == 1:
+            self.coords(self._line, x0, pts[1], w, pts[1])
+            self.coords(self._fill, max(0, x0), h, x0, pts[1], w, pts[1], w, h)
+        else:
+            self.coords(self._line, *pts)
+            self.coords(self._fill, max(0, x0), h, *pts, w, h)
+
+
+class Gauge(tk.Canvas):
+    def __init__(self, parent, size=118, color=GREEN, bg=CARD):
+        super().__init__(parent, width=size, height=size, bg=bg,
+                         highlightthickness=0, bd=0)
+        pad = 9
+        box = (pad, pad, size - pad, size - pad)
+        self.create_arc(*box, start=225, extent=-270, style="arc",
+                        outline=TRACK, width=9)
+        self.fg = self.create_arc(*box, start=225, extent=0, style="arc",
+                                  outline=color, width=9)
+        self.txt = self.create_text(size / 2, size / 2 + 2, text="0%",
+                                    fill=TEXT, font=(FONT, 20, "bold"))
+        self.size = size
+
+    def set(self, percent, color=None):
+        p = max(0.0, min(100.0, float(percent)))
+        self.itemconfigure(self.fg, extent=-270 * p / 100.0)
+        if color:
+            self.itemconfigure(self.fg, outline=color)
+        self.itemconfigure(self.txt, text=f"{p:.0f}%")
+
+
+class NavButton(tk.Canvas):
+    def __init__(self, parent, text, kind, command, width=170, height=38):
+        super().__init__(parent, width=width, height=height, bg=PANEL_BG,
+                         highlightthickness=0, bd=0, cursor="hand2")
+        self.label = text
+        self.kind = kind
+        self.command = command
+        self.active = False
+        self.hover = False
+        self.bind("<Button-1>", lambda e: self.command())
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.draw()
+
+    def _enter(self, _e):
+        self.hover = True
+        self.draw()
+
+    def _leave(self, _e):
+        self.hover = False
+        self.draw()
+
+    def set_active(self, active):
+        self.active = active
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        w = int(self["width"])
+        h = int(self["height"])
+        if self.active:
+            round_rect(self, 1, 2, w - 1, h - 2, 8, fill=ACCENT, outline="")
+        elif self.hover:
+            round_rect(self, 1, 2, w - 1, h - 2, 8, fill=CARD_DARK, outline="")
+        color = "#ffffff" if self.active else (TEXT if self.hover else MUTED)
+        draw_icon(self, self.kind, 13, h / 2 - 8, 16, color)
+        self.create_text(40, h / 2 + 1, text=tr(self.label), anchor="w",
+                         fill=color, font=(FONT, 10, "bold" if self.active else "normal"))
+
+
+class TabButton(tk.Canvas):
+    def __init__(self, parent, text, kind, command):
+        f = tkfont.Font(family=FONT, size=9)
+        width = 34 + f.measure(text) + 12
+        super().__init__(parent, width=width, height=34, bg=BG,
+                         highlightthickness=0, bd=0, cursor="hand2")
+        self.label = text
+        self.kind = kind
+        self.command = command
+        self.active = False
+        self.hover = False
+        self.bind("<Button-1>", lambda e: self.command())
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.draw()
+
+    def _enter(self, _e):
+        self.hover = True
+        self.draw()
+
+    def _leave(self, _e):
+        self.hover = False
+        self.draw()
+
+    def set_active(self, active):
+        self.active = active
+        self.draw()
+
+    def draw(self):
+        self.delete("all")
+        w = int(self["width"])
+        h = int(self["height"])
+        if self.active:
+            round_rect(self, 0, 2, w, h - 2, 7, fill=ACCENT, outline="")
+        elif self.hover:
+            round_rect(self, 0, 2, w, h - 2, 7, fill=CARD_DARK, outline="")
+        color = "#ffffff" if self.active else (TEXT if self.hover else MUTED)
+        draw_icon(self, self.kind, 12, 9, 16, color)
+        self.create_text(34, h / 2 + 1, text=tr(self.label), anchor="w",
+                         fill=color, font=(FONT, 10, "bold" if self.active else "normal"))
+
+
+class ChoiceRow(tk.Frame):
+    """Pilihan segmen (pengganti radio button) dengan gaya gelap."""
+
+    def __init__(self, parent, label, options, value, command):
+        super().__init__(parent, bg=CARD)
+        self.command = command
+        self.value = value
+        self.buttons = {}
+        tk.Label(self, text=label, bg=CARD, fg=TEXT, font=(FONT, 10),
+                 width=32, anchor="w").pack(side="left")
+        f = tkfont.Font(family=FONT, size=9)
+        for val, text in options:
+            width = f.measure(text) + 22
+            c = tk.Canvas(self, width=width, height=30, bg=CARD,
+                          highlightthickness=0, bd=0, cursor="hand2")
+            c.pack(side="left", padx=3)
+            c.bind("<Button-1>", lambda e, v=val: self.set(v))
+            self.buttons[val] = (c, text, width)
+        self.draw_all()
+
+    def set(self, value):
+        self.value = value
+        self.draw_all()
+        if self.command:
+            self.command(value)
+
+    def draw_all(self):
+        for val, (c, text, width) in self.buttons.items():
+            c.delete("all")
+            active = val == self.value
+            if active:
+                round_rect(c, 0, 2, width, 28, 6, fill=ACCENT, outline="")
+                fg = "#ffffff"
+            else:
+                round_rect(c, 0, 2, width, 28, 6, fill=CARD_DARK, outline=BORDER)
+                fg = MUTED
+            c.create_text(width / 2, 15, text=tr(text), fill=fg,
+                          font=(FONT, 9, "bold" if active else "normal"))
+
+
+class ToggleRow(tk.Frame):
+    """Checkbox kustom: kotak centang + label, bisa diklik di mana saja."""
+
+    def __init__(self, parent, label, value, command):
+        super().__init__(parent, bg=CARD)
+        self.value = bool(value)
+        self.command = command
+        self.columnconfigure(0, weight=1)
+        self.label = tk.Label(self, text=label, bg=CARD, fg=TEXT,
+                              font=(FONT, 10), anchor="w")
+        self.label.grid(row=0, column=0, sticky="w")
+        self.box = tk.Canvas(self, width=18, height=18, bg=CARD,
+                             highlightthickness=0, bd=0, cursor="hand2")
+        self.box.grid(row=0, column=1, sticky="e", padx=(8, 0))
+        for w in (self, self.label, self.box):
+            w.bind("<Button-1>", self.toggle)
+        self.draw()
+
+    def toggle(self, _e=None):
+        self.value = not self.value
+        self.draw()
+        if self.command:
+            self.command(self.value)
+
+    def draw(self):
+        c = self.box
+        c.delete("all")
+        if self.value:
+            round_rect(c, 1, 1, 17, 17, 4, fill=ACCENT, outline=ACCENT)
+            c.create_line(4.5, 9, 7.5, 12.5, 13.5, 5, fill="#ffffff",
+                          width=2, capstyle="round")
+        else:
+            round_rect(c, 1, 1, 17, 17, 4, fill=CARD_DARK, outline=BORDER)
+
+
+class ScrollPage(tk.Frame):
+    def __init__(self, parent):
+        super().__init__(parent, bg=BG)
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0, bd=0)
+        self.vsb = ttk.Scrollbar(self, orient="vertical",
+                                 command=self.canvas.yview,
+                                 style="Dark.Vertical.TScrollbar")
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.vsb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner = tk.Frame(self.canvas, bg=BG)
+        self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", self._on_inner)
+        self.canvas.bind("<Configure>", self._on_canvas)
+        self._bind_wheel(self.inner)
+
+    def _on_inner(self, _e):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._update_scrollbar()
+
+    def _on_canvas(self, e):
+        self.canvas.itemconfigure(self._win, width=e.width)
+        self._update_scrollbar()
+
+    def _update_scrollbar(self):
+        try:
+            bbox = self.canvas.bbox("all")
+            need = bool(bbox) and (bbox[3] - bbox[1]) > self.canvas.winfo_height() + 1
+            if need and not self.vsb.winfo_ismapped():
+                self.vsb.pack(side="right", fill="y", before=self.canvas)
+            elif not need and self.vsb.winfo_ismapped():
+                self.vsb.pack_forget()
+        except Exception:
+            pass
+
+    def _bind_wheel(self, widget):
+        widget.bind("<Button-4>", self._wheel, add="+")
+        widget.bind("<Button-5>", self._wheel, add="+")
+        widget.bind("<MouseWheel>", self._wheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_wheel(child)
+
+    def _wheel(self, event):
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            delta = -1 if event.delta > 0 else 1
+        self.canvas.yview_scroll(delta * 3, "units")
+
+
+# ----------------------------------------------------------------------------
+# Data hardware statis
+# ----------------------------------------------------------------------------
+def default_iface():
+    try:
+        with open("/proc/net/route") as f:
+            lines = f.read().splitlines()[1:]
+        for line in lines:
+            parts = line.split()
+            if len(parts) > 2 and parts[1] == "00000000":
+                return parts[0]
+    except Exception:
+        pass
+    try:
+        stats = psutil.net_if_stats()
+        for name, st in stats.items():
+            if st.isup and name.lower() not in ("lo", "loopback"):
+                return name
+    except Exception:
+        pass
+    return "lo"
+
+
+def read_zram():
+    base = "/sys/block/zram0"
+    if not os.path.isdir(base):
+        return None
+    try:
+        disksize = read_int(base + "/disksize")
+        fields = read(base + "/mm_stat").split()
+        orig = int(fields[0]) if fields else 0
+        comp = int(fields[1]) if len(fields) > 1 else 0
+        algo = read(base + "/comp_algorithm")
+        m = re.search(r"\[([^\]]+)\]", algo)
+        algo = m.group(1) if m else "-"
+        return {"disksize": disksize, "orig": orig, "comp": comp, "algo": algo}
+    except Exception:
+        return None
+
+
+def win_battery_extra():
+    if OS_NAME != "Windows":
+        return {}
+    out = powershell(
+        "Get-CimInstance Win32_Battery | Select-Object -First 1 "
+        "DesignCapacity,FullChargeCapacity,EstimatedChargeRemaining,"
+        "BatteryStatus,PowerOnline,Name,Manufacturer,Chemistry | "
+        "ConvertTo-Json -Compress", timeout=6)
+    try:
+        data = json.loads(out) if out else {}
+    except Exception:
+        return {}
+    extra = {}
+    try:
+        design = float(data.get("DesignCapacity") or 0) / 1000.0
+        full = float(data.get("FullChargeCapacity") or 0) / 1000.0
+        if design > 0:
+            extra["energy_design"] = design
+        if full > 0:
+            extra["energy_full"] = full
+    except Exception:
+        pass
+    if data.get("EstimatedChargeRemaining") is not None:
+        try:
+            extra["percent"] = float(data["EstimatedChargeRemaining"])
+        except Exception:
+            pass
+    if data.get("PowerOnline") is not None:
+        extra["ac_online"] = bool(data["PowerOnline"])
+    status_code = data.get("BatteryStatus")
+    if status_code in (6, 7, 8, 9):
+        extra["status"] = "Charging"
+    elif status_code == 3:
+        extra["status"] = "Full"
+    elif data.get("PowerOnline") is False:
+        extra["status"] = "Discharging"
+    for src, dst in (("Name", "model"), ("Manufacturer", "manufacturer"),
+                     ("Chemistry", "technology")):
+        if data.get(src):
+            extra[dst] = str(data[src])
+    return extra
+
+
+def mac_battery_extra():
+    if OS_NAME != "Darwin":
+        return {}
+    extra = {}
+    out = run_cmd(["system_profiler", "SPPowerDataType"], timeout=8)
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key, value = key.strip(), value.strip()
+        if key == "Cycle Count":
+            try:
+                extra["cycles"] = int(value)
+            except Exception:
+                pass
+        elif key == "Maximum Capacity":
+            m = re.search(r"(\d+)", value)
+            if m:
+                extra["health"] = float(m.group(1))
+        elif key == "Condition":
+            extra["condition"] = value
+    pmset = run_cmd(["pmset", "-g", "batt"], timeout=4)
+    if "AC Power" in pmset:
+        extra["ac_online"] = True
+    elif "Battery Power" in pmset:
+        extra["ac_online"] = False
+    return extra
+
+
+def battery_static_extra():
+    global _BAT_STATIC
+    if _BAT_STATIC is None:
+        if OS_NAME == "Windows":
+            _BAT_STATIC = win_battery_extra()
+        elif OS_NAME == "Darwin":
+            _BAT_STATIC = mac_battery_extra()
+        else:
+            _BAT_STATIC = {}
+    return _BAT_STATIC
+
+
+def read_battery():
+    info = {}
+    base = "/sys/class/power_supply/BAT0"
+    if os.path.isdir(base):
+        def val(name):
+            return read(base + "/" + name, "")
+
+        def num(name):
+            try:
+                return float(val(name) or 0)
+            except Exception:
+                return 0.0
+
+        info = {
+            "present": read_int(base + "/present", 1) == 1,
+            "percent": num("capacity"),
+            "status": val("status") or "Unknown",
+            "energy_now": num("energy_now") / 1e6,
+            "energy_full": num("energy_full") / 1e6,
+            "energy_design": num("energy_full_design") / 1e6,
+            "power": num("power_now") / 1e6,
+            "voltage": num("voltage_now") / 1e6,
+            "cycles": read_int(base + "/cycle_count", -1),
+            "technology": val("technology") or "-",
+            "model": val("model_name") or "-",
+            "manufacturer": val("manufacturer") or "-",
+            "ac_online": read_int(
+                "/sys/class/power_supply/ADP1/online", -1) == 1,
+        }
+        # Sebagian laptop hanya menyediakan charge_*; ubah ke Wh.
+        if info["energy_full"] == 0:
+            charge = num("charge_full")
+            if charge > 0 and info["voltage"] > 0:
+                info["energy_full"] = charge * info["voltage"] / 1e12
+        if info["energy_design"] == 0:
+            charge = num("charge_full_design")
+            if charge > 0 and info["voltage"] > 0:
+                info["energy_design"] = charge * info["voltage"] / 1e12
+        if info["energy_now"] == 0:
+            charge = num("charge_now")
+            if charge > 0 and info["voltage"] > 0:
+                info["energy_now"] = charge * info["voltage"] / 1e12
+
+    sb = None
+    try:
+        sb = psutil.sensors_battery()
+    except Exception:
+        pass
+    if not info and not sb:
+        return None
+
+    info.setdefault("present", True)
+    info.setdefault("percent", 0.0)
+    info.setdefault("status", "Unknown")
+    info.setdefault("energy_now", 0.0)
+    info.setdefault("energy_full", 0.0)
+    info.setdefault("energy_design", 0.0)
+    info.setdefault("power", 0.0)
+    info.setdefault("voltage", 0.0)
+    info.setdefault("cycles", -1)
+    info.setdefault("technology", "-")
+    info.setdefault("model", "-")
+    info.setdefault("manufacturer", "-")
+    info.setdefault("ac_online", False)
+
+    for key, value in battery_static_extra().items():
+        if key in ("energy_design", "energy_full", "cycles", "technology",
+                   "model", "manufacturer", "health"):
+            if value not in (None, "", 0):
+                info[key] = value
+        elif key == "condition" and LANG == "id":
+            info.setdefault("condition", value)
+
+    if sb:
+        info["plugged"] = bool(sb.power_plugged)
+        info["secsleft"] = sb.secsleft
+        if sb.percent is not None:
+            info["percent"] = sb.percent
+        if OS_NAME != "Linux":
+            info["ac_online"] = bool(sb.power_plugged)
+    else:
+        info["plugged"] = bool(info.get("ac_online"))
+        info["secsleft"] = None
+
+    if not info.get("status") or info.get("status") == "Unknown":
+        if info["plugged"]:
+            info["status"] = "Full" if info["percent"] >= 99.5 else "Charging"
+        else:
+            info["status"] = "Discharging"
+
+    if info.get("energy_design", 0) > 0:
+        info["health"] = info["energy_full"] / info["energy_design"] * 100.0
+    else:
+        info.setdefault("health", None)
+    return info
+
+
+def battery_capacity_text(bat):
+    if not bat:
+        return "-"
+    full = bat.get("energy_full", 0) or 0
+    design = bat.get("energy_design", 0) or 0
+    if full <= 0 and design <= 0:
+        return "-"
+    return f"{fnum(full, 1)} / {fnum(design, 1)} Wh"
+
+
+def battery_status_text(bat):
+    if not bat:
+        return "-"
+    mapping = {
+        "full": "Penuh",
+        "charging": "Mengisi daya",
+        "discharging": "Memakai baterai",
+        "not charging": "Tidak mengisi",
+        "unknown": "-",
+    }
+    label = mapping.get((bat.get("status") or "").lower(),
+                        bat.get("status", "-"))
+    return tr(label)
+
+
+def battery_source_text(bat):
+    if not bat:
+        return "-"
+    if bat.get("ac_online") or bat.get("plugged"):
+        return tr("AC / adaptor")
+    return tr("Baterai")
+
+
+def battery_health_text(bat):
+    if not bat or bat.get("health") is None:
+        return "-"
+    h = bat["health"]
+    if h >= 90:
+        note = "Baik"
+    elif h >= 75:
+        note = "Cukup"
+    elif h >= 60:
+        note = "Perlu perhatian"
+    else:
+        note = "Lemah"
+    return f"{h:.0f}% · {tr(note)}"
+
+
+def battery_time_text(bat):
+    if not bat:
+        return "-"
+    if bat.get("plugged") and bat.get("percent", 0) >= 99:
+        return tr("Tidak terbatas (AC)")
+    secs = bat.get("secsleft")
+    if secs is None or secs < 0:
+        return "-"
+    return "± " + durasi(secs)
+
+
+def cache_sizes():
+    base = "/sys/devices/system/cpu/cpu0/cache"
+    l1d = l1i = l2 = l3 = ""
+    try:
+        for entry in os.listdir(base):
+            level = read_int(os.path.join(base, entry, "level"))
+            typ = read(os.path.join(base, entry, "type"))
+            size = read(os.path.join(base, entry, "size"))
+            if level == 1 and typ == "Data":
+                l1d = size
+            elif level == 1 and typ == "Instruction":
+                l1i = size
+            elif level == 2:
+                l2 = size
+            elif level == 3:
+                l3 = size
+    except Exception:
+        pass
+    l1 = ""
+    if l1d or l1i:
+        l1 = f"{l1d} (data) + {l1i} (instruksi)" if l1d and l1i else (l1d or l1i)
+    return l1, l2, l3
+
+
+def _first_line(text):
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _sysfs_disk_name(part):
+    part = os.path.basename(part or "")
+    for pattern in (r"^(mmcblk\d+|nvme\d+n\d+|md\d+|loop\d+)(?:p\d+)?$",
+                    r"^(sd[a-z]+|vd[a-z]+|hd[a-z]+)\d*$"):
+        m = re.match(pattern, part)
+        if m:
+            return m.group(1)
+    return part
+
+
+def _fs_type(mount):
+    try:
+        for part in psutil.disk_partitions(all=False):
+            if part.mountpoint == mount:
+                return part.fstype or "-"
+    except Exception:
+        pass
+    return "-"
+
+
+def _linux_disk_type(name):
+    if not name:
+        return "-"
+    if name.startswith("mmcblk"):
+        return "eMMC"
+    if name.startswith("nvme"):
+        return "NVMe SSD"
+    if name.startswith("zram"):
+        return "ZRAM"
+    if name.startswith(("sd", "vd", "hd")):
+        rotational = read(f"/sys/block/{name}/queue/rotational")
+        if rotational == "1":
+            return "HDD"
+        if rotational == "0":
+            return "SSD"
+    return "-"
+
+
+def disk_info():
+    """Model, ukuran, dan tipe disk, lintas OS sejauh data tersedia."""
+    model, size, dtype = "-", 0, "-"
+    if OS_NAME == "Linux":
+        names = []
+        try:
+            for p in psutil.disk_partitions(all=False):
+                if p.mountpoint == "/":
+                    names.append(_sysfs_disk_name(p.device))
+        except Exception:
+            pass
+        names += ["mmcblk0", "nvme0n1", "sda"]
+        for name in names:
+            if not name:
+                continue
+            for path in (f"/sys/block/{name}/device/model",
+                         f"/sys/block/{name}/device/name"):
+                value = read(path)
+                if value:
+                    model = value
+                    break
+            sz = read_int(f"/sys/block/{name}/size") * 512
+            if sz:
+                size = sz
+            dtype = _linux_disk_type(name)
+            if model != "-" or size:
+                break
+    elif OS_NAME == "Windows":
+        out = powershell("Get-PhysicalDisk | Select-Object -First 1 "
+                         "FriendlyName,MediaType,Size | ConvertTo-Json -Compress")
+        try:
+            data = json.loads(out) if out else {}
+            model = data.get("FriendlyName") or "-"
+            size = int(data.get("Size") or 0)
+            media = data.get("MediaType")
+            dtype = {3: "HDD", 4: "SSD", 5: "SCM"}.get(media, "-")
+        except Exception:
+            pass
+    elif OS_NAME == "Darwin":
+        out = run_cmd(["diskutil", "info", "/"], timeout=6)
+        for line in out.splitlines():
+            if "Device / Media Name:" in line:
+                model = line.split(":", 1)[1].strip()
+            elif "Disk Size:" in line:
+                m = re.search(r"\((\d+) Bytes\)", line)
+                if m:
+                    size = int(m.group(1))
+            elif "Solid State:" in line:
+                dtype = "SSD" if "Yes" in line else "HDD"
+    if not size:
+        try:
+            size = psutil.disk_usage(ROOT_MOUNT).total
+        except Exception:
+            pass
+    return model, size, dtype
+
+
+def win_hw_info():
+    if OS_NAME != "Windows":
+        return {}
+    command = (
+        "$cs=Get-CimInstance Win32_ComputerSystem;"
+        "$bb=Get-CimInstance Win32_BaseBoard;"
+        "$b=Get-CimInstance Win32_BIOS;"
+        "$g=Get-CimInstance Win32_VideoController | Select-Object -First 1;"
+        "[pscustomobject]@{vendor=$cs.Manufacturer;product=$cs.Model;"
+        "board=$bb.Product;bios=$b.SMBIOSBIOSVersion;"
+        "bios_date=([string]$b.ReleaseDate);gpu=$g.Name} | "
+        "ConvertTo-Json -Compress")
+    out = powershell(command, timeout=8)
+    try:
+        return json.loads(out) if out else {}
+    except Exception:
+        return {}
+
+
+def mac_hw_info():
+    if OS_NAME != "Darwin":
+        return {}
+    info = {"vendor": "Apple Inc."}
+    out = run_cmd(["system_profiler", "SPHardwareDataType"], timeout=8)
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key, value = key.strip(), value.strip()
+        if key == "Model Name":
+            info["product"] = value
+        elif key == "Model Identifier":
+            info["board"] = value
+        elif key in ("Boot ROM Version", "System Firmware Version"):
+            info.setdefault("bios", value)
+    out = run_cmd(["system_profiler", "SPDisplaysDataType"], timeout=8)
+    for line in out.splitlines():
+        if "Chipset Model:" in line:
+            info["gpu"] = line.split(":", 1)[1].strip()
+            break
+    return info
+
+
+def collect_hw():
+    hw = {"os_family": OS_NAME}
+    cpuinfo = read("/proc/cpuinfo") if OS_NAME == "Linux" else ""
+    m = re.search(r"model name\s*:\s*(.+)", cpuinfo)
+    model = m.group(1).strip() if m else ""
+    if not model and OS_NAME == "Windows":
+        model = _first_line(powershell(
+            "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"))
+    if not model and OS_NAME == "Darwin":
+        model = run_cmd(["sysctl", "-n", "machdep.cpu.brand_string"])
+    hw["cpu_model"] = model or platform.processor() or "CPU"
+    m = re.search(r"@\s*([\d.]+)\s*GHz", hw["cpu_model"])
+    hw["base_ghz"] = float(m.group(1)) if m else 0.0
+    hw["arch"] = platform.machine()
+    hw["cores"] = psutil.cpu_count(logical=False) or 1
+    hw["threads"] = psutil.cpu_count(logical=True) or 1
+    l1, l2, l3 = cache_sizes()
+    hw["l1"], hw["l2"], hw["l3"] = l1, l2, l3
+    hw["governor"] = read(
+        "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "-")
+    try:
+        hw["boost"] = psutil.cpu_freq().max
+    except Exception:
+        hw["boost"] = 0
+
+    hw["product"] = hw["vendor"] = hw["board"] = hw["bios"] = "-"
+    hw["bios_date"] = ""
+    if OS_NAME == "Linux":
+        hw["product"] = read("/sys/class/dmi/id/product_name", "-")
+        hw["vendor"] = read("/sys/class/dmi/id/sys_vendor", "-")
+        hw["board"] = read("/sys/class/dmi/id/board_name", "-")
+        hw["bios"] = read("/sys/class/dmi/id/bios_version", "-")
+        hw["bios_date"] = read("/sys/class/dmi/id/bios_date", "")
+    elif OS_NAME == "Windows":
+        info = win_hw_info()
+        hw["product"] = info.get("product") or "-"
+        hw["vendor"] = info.get("vendor") or "-"
+        hw["board"] = info.get("board") or "-"
+        hw["bios"] = info.get("bios") or "-"
+        hw["bios_date"] = info.get("bios_date") or ""
+        hw["gpu"] = info.get("gpu") or "-"
+    elif OS_NAME == "Darwin":
+        info = mac_hw_info()
+        hw["product"] = info.get("product") or "-"
+        hw["vendor"] = info.get("vendor") or "-"
+        hw["board"] = info.get("board") or "-"
+        hw["bios"] = info.get("bios") or "-"
+        hw["gpu"] = info.get("gpu") or "-"
+
+    hw["kernel"] = platform.release()
+    if OS_NAME == "Linux":
+        osrel = {}
+        for line in read("/etc/os-release").splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                osrel[k] = v.strip('"')
+        hw["os"] = osrel.get("PRETTY_NAME", "Linux")
+    elif OS_NAME == "Windows":
+        hw["os"] = platform.platform()
+    elif OS_NAME == "Darwin":
+        hw["os"] = "macOS " + (platform.mac_ver()[0] or platform.release())
+    else:
+        hw["os"] = platform.platform()
+
+    hw["hostname"] = platform.node()
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+    if not desktop and OS_NAME == "Linux" and run_cmd(["pgrep", "-x", "xfdesktop"]):
+        desktop = "XFCE"
+    hw["desktop"] = desktop or {"Windows": "Windows", "Darwin": "macOS"}.get(
+        OS_NAME, OS_NAME)
+
+    if "gpu" not in hw:
+        hw["gpu"] = "-"
+        for line in run_cmd(["lspci"]).splitlines():
+            if re.search(r"VGA compatible|3D controller|Display controller",
+                         line, re.I):
+                hw["gpu"] = line.split(":", 2)[-1].strip()
+                break
+
+    hw["disk_model"], hw["disk_size"], hw["disk_type"] = disk_info()
+    hw["bat"] = {}
+    if OS_NAME == "Linux":
+        for key in ("capacity", "status", "power_now", "energy_now",
+                    "energy_full", "energy_full_design", "voltage_now"):
+            val = read("/sys/class/power_supply/BAT0/" + key)
+            if val:
+                hw["bat"][key] = val
+    return hw
+
+
+def temp_slots():
+    """Daftar sensor suhu yang akan ditampilkan (stabil sepanjang sesi)."""
+    slots = []
+    try:
+        sensors = psutil.sensors_temperatures()
+    except Exception:
+        sensors = {}
+    if "coretemp" in sensors:
+        for e in sensors["coretemp"]:
+            label = e.label or "Core"
+            if label.startswith("Package"):
+                slots.append(("CPU Package", "coretemp", e.label))
+            elif label.startswith("Core"):
+                display = label.replace("Core", "Core").strip()
+                slots.append((display, "coretemp", e.label))
+    if "acpitz" in sensors:
+        for e in sensors["acpitz"][:1]:
+            slots.append(("Motherboard (ACPI)", "acpitz", e.label))
+    for chip in ("k10temp", "zenpower", "it8xxx2", "nct6775", "thinkpad"):
+        if chip in sensors:
+            for e in sensors[chip][:1]:
+                label = e.label or chip
+                slots.append((f"{chip.upper()} {label}".strip(), chip, e.label))
+    return slots
+
+
+def about_short_text():
+    if LANG == "en":
+        return (f"{APP_NAME} v{VERSION}\n\n"
+                "Lightweight system monitor: total and per-core CPU load, "
+                "temperature, RAM, ZRAM, swap, disk, network, and processes "
+                "with RAM/CPU usage.\n\n"
+                "Built with Python + tkinter + psutil. No Electron and no local "
+                "server — light on a 4 GB laptop.\n\n"
+                "Shortcuts: Ctrl+1…7 switch page · F5 refresh processes · "
+                "Ctrl+Q quit.")
+    return (f"{APP_NAME} v{VERSION}\n\n"
+            "Monitor sistem ringan: CPU total dan per core/thread, suhu, RAM, "
+            "ZRAM, swap, disk, jaringan, serta daftar proses dengan pemakaian "
+            "RAM dan CPU.\n\n"
+            "Dibuat dengan Python + tkinter + psutil. Tanpa Electron, tanpa "
+            "server lokal — hemat RAM untuk laptop 4 GB.\n\n"
+            "Pintasan: Ctrl+1…7 pindah halaman · F5 segarkan daftar proses · "
+            "Ctrl+Q keluar.")
+
+
+def about_long_text():
+    if LANG == "en":
+        return (
+            "This application helps you monitor your computer simply and "
+            "lightly. Key information — per-core CPU load, temperature, RAM, "
+            "ZRAM, swap, storage, network, and battery — is presented on one "
+            "dashboard so it is easy to read at a glance without burdening "
+            "the system.\n\n"
+            "Features:\n"
+            "  •  Total CPU graph and a separate graph for each core/thread "
+            "(follows the number of logical CPUs automatically).\n"
+            "  •  CPU temperature (package and per core) from the coretemp "
+            "sensor when available.\n"
+            "  •  RAM, ZRAM, swap, disk, and network graphs.\n"
+            "  •  Battery: percentage, health, capacity, power, cycles, "
+            "AC/battery source, and remaining time.\n"
+            "  •  Indonesian and English UI, automatically following the "
+            "system locale or selectable in Settings.\n"
+            "  •  Process list with CPU %, RAM, RAM %, threads, and status; "
+            "searchable, sortable, and endable.\n"
+            "  •  Hardware, storage, and network information.\n\n"
+            "Developed by DikNom.\n\n"
+            "Dependencies: Python 3, tkinter, psutil. No local server, no "
+            "Electron. Estimated RAM 35–50 MB.\n\n"
+            "Shortcuts: Ctrl+1…7 switch page · F5 refresh processes · "
+            "Ctrl+Q quit.")
+    return (
+        "Aplikasi ini dibuat untuk membantu pengguna memantau kondisi "
+        "komputer dengan cara yang sederhana dan ringan. Semua informasi "
+        "penting — beban CPU per core, suhu, RAM, ZRAM, swap, penyimpanan, "
+        "jaringan, dan baterai — disajikan dalam satu dashboard agar mudah "
+        "dibaca sekilas tanpa membebani sistem.\n\n"
+        "Fitur:\n"
+        "  •  Grafik CPU total dan grafik terpisah untuk setiap core/thread "
+        "(otomatis mengikuti jumlah CPU logis).\n"
+        "  •  Suhu CPU (package dan per core) dari sensor coretemp bila ada.\n"
+        "  •  Grafik RAM, ZRAM, swap, disk, dan jaringan.\n"
+        "  •  Baterai: persentase, kesehatan, kapasitas, daya, siklus, "
+        "sumber daya AC/baterai, dan sisa waktu.\n"
+        "  •  Bahasa Indonesia dan English, otomatis mengikuti locale "
+        "sistem atau dipilih di Pengaturan.\n"
+        "  •  Daftar proses dengan CPU %, RAM, RAM %, thread, dan status; "
+        "bisa dicari, diurutkan, dan diakhiri.\n"
+        "  •  Informasi hardware, penyimpanan, dan jaringan.\n\n"
+        "Dikembangkan oleh DikNom.\n\n"
+        "Dependensi: Python 3, tkinter, psutil. Tidak ada server lokal, "
+        "tidak ada Electron. Perkiraan RAM 35–50 MB.\n\n"
+        "Pintasan: Ctrl+1…7 pindah halaman · F5 segarkan proses · "
+        "Ctrl+Q keluar.")
+
+
+def temp_missing_text():
+    if LANG == "en":
+        if OS_NAME == "Linux":
+            return ("Temperature sensor not detected.\n"
+                    "Install lm-sensors to read sensors.")
+        return "Temperature sensor is not available on this system."
+    if OS_NAME == "Linux":
+        return ("Sensor suhu tidak terdeteksi.\n"
+                "Instal lm-sensors untuk membaca sensor.")
+    return "Sensor suhu tidak tersedia di sistem ini."
+
+
+# ----------------------------------------------------------------------------
+# Aplikasi
+# ----------------------------------------------------------------------------
+class App(tk.Tk):
+    def __init__(self, start_page="performance"):
+        super().__init__()
+        self.cfg = self._load_cfg()
+        global LANG
+        LANG = resolve_language(self.cfg.get("language", "auto"))
+        choose_fonts(self)
+        self.title(APP_NAME)
+        self.configure(bg=BG)
+        self.hw = collect_hw()
+        self.iface = default_iface()
+        self.w = {}
+        self.sparks = []
+        self.pages = {}
+        self.nav_buttons = {}
+        self.tab_buttons = {}
+        self.current_page = None
+        self.proc_rows = []
+        self.proc_ts = 0.0
+        self.proc_shown = 0.0
+        self.proc_thread = None
+        self.proc_prev = {}
+        self.proc_sort = ("ram", True)
+        self.proc_search = tk.StringVar()
+        self.proc_search.trace_add("write", lambda *_: self.render_procs())
+
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w = min(int(self.cfg.get("width", 1268)), sw - 10)
+        h = min(int(self.cfg.get("height", 760)), sh - 36)
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2 - 10)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(1024, 620)
+        self.attributes("-topmost", bool(self.cfg.get("ontop", False)))
+        self._icon = None
+        icon_path = find_icon_path()
+        if icon_path:
+            try:
+                self._icon = tk.PhotoImage(file=icon_path)
+                self.iconphoto(True, self._icon)
+            except Exception:
+                self._icon = None
+
+        self.m = {}
+        self.last_t = 0.0
+        self.prev_io = None
+        self.prev_net = None
+        self.last_proc_mem = 0
+
+        # pemanasan penghitung CPU
+        psutil.cpu_percent(None)
+        psutil.cpu_percent(None, percpu=True)
+        try:
+            psutil.getloadavg()
+        except Exception:
+            pass
+
+        install_styles(self)
+        self._build_shell()
+        self.show_page(start_page)
+        self.bind("<Control-q>", lambda e: self.on_close())
+        for i, (key, _t, _i) in enumerate(PAGES):
+            self.bind(f"<Control-Key-{i + 1}>",
+                      lambda e, k=key: self.show_page(k))
+        self.bind("<F5>", lambda e: self.refresh_processes(force=True))
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.after(200, self.tick)
+
+    # ------------------------------------------------------------------ config
+    @staticmethod
+    def _load_cfg():
+        cfg = dict(DEFAULTS)
+        try:
+            with open(CFG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                cfg.update(data)
+        except Exception:
+            pass
+        return cfg
+
+    def _save_cfg(self):
+        try:
+            os.makedirs(CFG_DIR, exist_ok=True)
+            with open(CFG_PATH, "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=2)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------- shell
+    def _build_shell(self):
+        # Status bar bawah
+        status = tk.Frame(self, bg=PANEL_BG, height=26)
+        status.pack(fill="x", side="bottom")
+        status.pack_propagate(False)
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x", side="bottom")
+        self.status_uptime = tk.Label(status, text="Uptime: -", bg=PANEL_BG,
+                                      fg=MUTED, font=(FONT, 9))
+        self.status_uptime.pack(side="left", padx=(14, 10))
+        self._sep(status)
+        self.status_kernel = tk.Label(status, text=f"Kernel: {self.hw['kernel']}",
+                                      bg=PANEL_BG, fg=MUTED, font=(FONT, 9))
+        self.status_kernel.pack(side="left", padx=10)
+        self._sep(status)
+        self.status_desktop = tk.Label(status, text=f"Desktop: {self.hw['desktop']}",
+                                       bg=PANEL_BG, fg=MUTED, font=(FONT, 9))
+        self.status_desktop.pack(side="left", padx=10)
+        right = tk.Label(status, text=f"DikNom System Monitor v{VERSION}",
+                         bg=PANEL_BG, fg=MUTED, font=(FONT, 9))
+        right.pack(side="right", padx=14)
+        dot = tk.Canvas(status, width=8, height=8, bg=PANEL_BG,
+                        highlightthickness=0, bd=0)
+        dot.pack(side="right", padx=(0, 6))
+        dot.create_oval(1, 1, 7, 7, fill=GREEN, outline="")
+        self.monitor_dot = dot
+
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True)
+
+        # Sidebar
+        sidebar = tk.Frame(body, bg=PANEL_BG, width=190)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        brand = tk.Frame(sidebar, bg=PANEL_BG)
+        brand.pack(fill="x", pady=(16, 8))
+        bc = tk.Canvas(brand, width=76, height=52, bg=PANEL_BG,
+                       highlightthickness=0, bd=0)
+        bc.pack()
+        draw_monitor(bc, 10, 6, 56, 40, BLUE)
+        tk.Label(brand, text="DikNom", bg=PANEL_BG, fg=TEXT,
+                 font=(FONT, 21, "bold")).pack()
+        tk.Label(brand, text="Monitor Sistem", bg=PANEL_BG, fg=TEXT,
+                 font=(FONT, 11)).pack()
+        tk.Label(brand, text="Monitor  •  Analisis", bg=PANEL_BG,
+                 fg=DIM, font=(FONT, 8)).pack(pady=(3, 10))
+
+        nav = tk.Frame(sidebar, bg=PANEL_BG)
+        nav.pack(fill="x", padx=10)
+        for key, label, icon in PAGES:
+            btn = NavButton(nav, label, icon, lambda k=key: self.show_page(k))
+            btn.pack(fill="x", pady=1)
+            self.nav_buttons[key] = btn
+
+        bottom = tk.Frame(sidebar, bg=PANEL_BG)
+        bottom.pack(side="bottom", fill="x", padx=16, pady=(0, 12))
+        tk.Frame(bottom, bg=BORDER, height=1).pack(fill="x", pady=(0, 10))
+        row = tk.Frame(bottom, bg=PANEL_BG)
+        row.pack(fill="x")
+        dot2 = tk.Canvas(row, width=10, height=10, bg=PANEL_BG,
+                         highlightthickness=0, bd=0)
+        dot2.pack(side="left")
+        dot2.create_oval(1, 1, 9, 9, fill=GREEN, outline="")
+        tk.Label(row, text="Monitoring aktif", bg=PANEL_BG, fg=TEXT,
+                 font=(FONT, 9)).pack(side="left", padx=5)
+        self.sidebar_interval = tk.Label(
+            bottom, text=f"{tr('Interval')}: {self.cfg.get('interval', 1)} "
+                         f"{tr('dtk')}", bg=PANEL_BG, fg=MUTED,
+            font=(FONT, 8), anchor="w")
+        self.sidebar_interval.pack(fill="x", pady=(4, 0))
+        self.sidebar_uptime = tk.Label(bottom, text="Uptime: -", bg=PANEL_BG,
+                                       fg=MUTED, font=(FONT, 8), anchor="w")
+        self.sidebar_uptime.pack(fill="x", pady=(1, 0))
+
+        # Area utama
+        main = tk.Frame(body, bg=BG)
+        main.pack(side="left", fill="both", expand=True)
+
+        self.pagehost = tk.Frame(main, bg=BG)
+        self.pagehost.pack(fill="both", expand=True)
+
+    def _sep(self, parent):
+        tk.Label(parent, text="|", bg=PANEL_BG, fg=BORDER,
+                 font=(FONT, 9)).pack(side="left", padx=2)
+
+    # ------------------------------------------------------------ page switch
+    def show_page(self, key):
+        builders = {
+            "performance": self.build_performance,
+            "hardware": self.build_hardware,
+            "processes": self.build_processes,
+            "storage": self.build_storage,
+            "network": self.build_network,
+            "settings": self.build_settings,
+            "about": self.build_about,
+        }
+        if key not in builders:
+            key = "performance"
+        if key not in self.pages:
+            self.pages[key] = builders[key](self.pagehost)
+        for page in self.pages.values():
+            page.pack_forget()
+        self.pages[key].pack(fill="both", expand=True)
+        if isinstance(self.pages[key], ScrollPage):
+            self.pages[key]._bind_wheel(self.pages[key].inner)
+            self.pages[key].canvas.yview_moveto(0)
+        self.current_page = key
+        self.cfg["page"] = key
+        for k, btn in self.nav_buttons.items():
+            btn.set_active(k == key)
+        for spark in self.sparks:
+            if spark.winfo_exists():
+                spark.after(30, spark.redraw)
+        if key == "processes":
+            self.refresh_processes(force=True)
+        if key == "storage":
+            self.fill_storage()
+
+    # ------------------------------------------------------------------ metric
+    def gather(self):
+        now = time.monotonic()
+        dt = max(0.05, now - self.last_t) if self.last_t else 1.0
+        self.last_t = now
+        m = self.m
+        m["cpu"] = psutil.cpu_percent(None)
+        m["cores"] = psutil.cpu_percent(None, percpu=True)
+        try:
+            m["freq"] = psutil.cpu_freq().current
+        except Exception:
+            m["freq"] = 0
+        m["vm"] = psutil.virtual_memory()
+        m["swap"] = psutil.swap_memory()
+        m["zram"] = read_zram()
+        m["battery"] = read_battery()
+        m["load"] = psutil.getloadavg()[0]
+        m["uptime"] = time.time() - psutil.boot_time()
+        m["temps"], m["temps_map"] = self._read_temps()
+
+        io = psutil.disk_io_counters()
+        m["io_r"] = m["io_w"] = 0.0
+        if io and self.prev_io:
+            m["io_r"] = max(0.0, (io.read_bytes - self.prev_io.read_bytes) / dt)
+            m["io_w"] = max(0.0, (io.write_bytes - self.prev_io.write_bytes) / dt)
+        self.prev_io = io
+
+        per = psutil.net_io_counters(pernic=True)
+        m["rx"] = m["tx"] = 0.0
+        if self.iface in per and self.prev_net and self.iface in self.prev_net:
+            m["rx"] = max(0.0, (per[self.iface].bytes_recv -
+                                self.prev_net[self.iface].bytes_recv) / dt)
+            m["tx"] = max(0.0, (per[self.iface].bytes_sent -
+                                self.prev_net[self.iface].bytes_sent) / dt)
+        self.prev_net = per
+
+        if now - getattr(self, "_disk_t", 0) > 20 or not hasattr(self, "disk_usage"):
+            self.disk_usage = psutil.disk_usage(ROOT_MOUNT)
+            self._disk_t = now
+
+    def _read_temps(self):
+        values = {}
+        flat = {}
+        try:
+            sensors = psutil.sensors_temperatures()
+        except Exception:
+            sensors = {}
+        for chip, entries in sensors.items():
+            for idx, e in enumerate(entries):
+                if e.current is None:
+                    continue
+                flat[(chip, e.label)] = e.current
+                flat[(chip, idx)] = e.current
+        for display, chip, label in temp_slots():
+            if (chip, label) in flat:
+                values[display] = flat[(chip, label)]
+            elif chip in sensors and sensors[chip]:
+                values[display] = sensors[chip][0].current
+        if not values and "coretemp" in sensors and sensors["coretemp"]:
+            values["CPU Package"] = sensors["coretemp"][0].current
+        return values, flat
+
+    # -------------------------------------------------------------------- tick
+    def tick(self):
+        interval = max(1, int(self.cfg.get("interval", 1)))
+        if self.state() == "iconic":
+            self.after(interval * 1000, self.tick)
+            return
+        try:
+            self.gather()
+        except Exception:
+            pass
+        try:
+            if "performance" in self.pages:
+                self.update_performance()
+            if self.current_page == "network" and "network" in self.pages:
+                self.update_network()
+            if self.current_page == "processes":
+                self.refresh_processes()
+                if self.proc_ts > self.proc_shown:
+                    self.proc_shown = self.proc_ts
+                    self.render_procs()
+            self.update_status()
+        except Exception:
+            pass
+        self.after(interval * 1000, self.tick)
+
+    def update_status(self):
+        up = durasi(self.m.get("uptime", 0))
+        self.status_uptime.config(text=f"Uptime: {up}")
+        self.sidebar_uptime.config(text=up)
+        self.sidebar_interval.config(
+            text=f"{tr('Interval')}: {self.cfg.get('interval', 1)} {tr('dtk')}")
+
+    # ------------------------------------------------------------- performance
+    def build_performance(self, host):
+        page = ScrollPage(host)
+        root = tk.Frame(page.inner, bg=BG)
+        root.pack(fill="both", expand=True, padx=12, pady=8)
+
+        row1 = self._card_row(root)
+        row1.pack(fill="x")
+        self.stat_card(row1, "cpu", "CPU", GREEN, "cpu", 0)
+        self.stat_card(row1, "ram", "RAM", BLUE, "ram", 1)
+        self.stat_card(row1, "zram", "ZRAM", PURPLE, "zram", 2)
+
+        row2 = self._card_row(root)
+        row2.pack(fill="x", pady=(8, 0))
+        self.stat_card(row2, "swap", "Swap", ORANGE, "swap", 0)
+        self.stat_card(row2, "disk", "Disk", TEAL, "disk", 1)
+        self.stat_card(row2, "net", "Jaringan", PINK, "net", 2)
+
+        row3 = tk.Frame(root, bg=BG)
+        row3.pack(fill="x", pady=(8, 0))
+        for c in range(3):
+            row3.columnconfigure(c, weight=1, uniform="p")
+        self._info_cpu_panel(row3).grid(row=0, column=0, sticky="nsew",
+                                        padx=(0, 5))
+        self._cores_panel(row3).grid(row=0, column=1, sticky="nsew", padx=5)
+        self._temp_panel(row3).grid(row=0, column=2, sticky="nsew",
+                                    padx=(5, 0))
+
+        row4 = tk.Frame(root, bg=BG)
+        row4.pack(fill="both", expand=True, pady=(8, 0))
+        has_battery = read_battery() is not None
+        columns = 3 if has_battery else 2
+        for c in range(columns):
+            row4.columnconfigure(c, weight=1, uniform="p")
+        self._disk_panel(row4).grid(row=0, column=0, sticky="nsew",
+                                    padx=(0, 4))
+        self._net_panel(row4).grid(
+            row=0, column=1, sticky="nsew",
+            padx=(4, 0) if not has_battery else 4)
+        if has_battery:
+            self._battery_panel(row4).grid(row=0, column=2, sticky="nsew",
+                                           padx=(4, 0))
+        return page
+
+    def _card_row(self, parent):
+        frame = tk.Frame(parent, bg=BG)
+        for c in range(3):
+            frame.columnconfigure(c, weight=1, uniform="card")
+        return frame
+
+    def stat_card(self, parent, key, title, color, icon, col):
+        card = Card(parent, height=146)
+        card.grid(row=0, column=col, sticky="nsew",
+                  padx=(0 if col == 0 else 5, 0 if col == 2 else 5))
+        card.pack_propagate(False)
+
+        hdr = tk.Frame(card, bg=CARD)
+        hdr.pack(fill="x", padx=12, pady=(9, 0))
+        make_icon(hdr, icon, 16, color).pack(side="left")
+        tk.Label(hdr, text=title, bg=CARD, fg=TEXT,
+                 font=(FONT, 10, "bold")).pack(side="left", padx=6)
+        badge = tk.Label(hdr, text="", bg=CARD, fg=ORANGE, font=(FONT, 9))
+        badge.pack(side="right")
+
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="both", expand=True, padx=12, pady=(2, 8))
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        bigwrap = tk.Frame(body, bg=CARD)
+        bigwrap.grid(row=0, column=0, sticky="sw", padx=(0, 4))
+        big = tk.Label(bigwrap, text="0", bg=CARD, fg=color,
+                       font=(FONT, 26, "bold"), anchor="w")
+        big.pack(side="left")
+        unit = tk.Label(bigwrap, text="", bg=CARD, fg=color,
+                        font=(FONT, 12), anchor="w")
+        unit.pack(side="left", anchor="s", padx=(3, 0), pady=(0, 4))
+        spark = Spark(body, color,
+                      maxval=100 if key in ("cpu", "ram") else None,
+                      height=56)
+        spark.grid(row=0, column=1, sticky="nsew", padx=(2, 0), pady=(4, 0))
+        sub = tk.Label(body, text="", bg=CARD, fg=MUTED,
+                       font=(FONT, 8), anchor="w", justify="left")
+        sub.grid(row=1, column=0, columnspan=2, sticky="sw")
+
+        self.sparks.append(spark)
+        self.w[key] = {"big": big, "unit": unit, "sub": sub, "spark": spark,
+                       "badge": badge}
+        return card
+
+    def set_big(self, key, text, color=None):
+        ref = self.w.get(key)
+        if not ref:
+            return
+        text = str(text)
+        if text.endswith("%"):
+            num, unit = text[:-1], "%"
+        elif " " in text:
+            num, unit = text.rsplit(" ", 1)
+        else:
+            num, unit = text, ""
+        ref["big"].config(text=num)
+        ref["unit"].config(text=unit)
+        if color:
+            ref["big"].config(fg=color)
+            ref["unit"].config(fg=color)
+
+    def _panel(self, parent, title, icon, height=214):
+        card = Card(parent, height=height)
+        card.pack_propagate(False)
+        hdr = tk.Frame(card, bg=CARD)
+        hdr.pack(fill="x", padx=12, pady=(9, 2))
+        make_icon(hdr, icon, 16, MUTED).pack(side="left")
+        tk.Label(hdr, text=title, bg=CARD, fg=TEXT,
+                 font=(FONT, 11, "bold")).pack(side="left", padx=6)
+        tk.Label(hdr, text="›", bg=CARD, fg=DIM,
+                 font=(FONT, 13)).pack(side="right")
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="both", expand=True, padx=12, pady=(2, 9))
+        return card, body
+
+    def _info_cpu_panel(self, parent):
+        card, body = self._panel(parent, "Informasi CPU", "cpu", height=204)
+        body.columnconfigure(0, weight=0, minsize=108)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+        left = tk.Frame(body, bg=CARD)
+        left.grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        gauge = Gauge(left, size=100)
+        gauge.pack()
+        tk.Label(left, text="Penggunaan CPU", bg=CARD, fg=MUTED,
+                 font=(FONT, 8)).pack(pady=(0, 2))
+        self.w["gauge"] = gauge
+
+        right = tk.Frame(body, bg=CARD)
+        right.grid(row=0, column=1, sticky="nsew")
+        hw = self.hw
+        l1 = (hw["l1"] or "-").replace(" (data)", "").replace(" (instruksi)", "")
+        l2 = cache_fmt(hw["l2"])
+        l3 = cache_fmt(hw["l3"])
+        nama = re.sub(r"\s*CPU\s*@.*$", "", hw["cpu_model"]).strip()
+        nama = nama.replace("Intel(R) ", "").replace("(R)", "")
+        nama = nama.replace("(TM)", "").strip()
+        rows = [
+            ("Nama", nama),
+            ("Arsitektur", hw["arch"]),
+            ("Core / Thread", f"{hw['cores']} / {hw['threads']}"),
+            ("Clock Dasar", ghz(hw["base_ghz"] * 1000)),
+            ("Clock Boost", ghz(hw["boost"])),
+            ("Cache L1", l1),
+            ("Cache L2", l2),
+            ("Cache L3", l3),
+        ]
+        for i, (k, v) in enumerate(rows):
+            tk.Label(right, text=k, bg=CARD, fg=MUTED, font=(FONT, 9),
+                     anchor="w").grid(row=i, column=0, sticky="w", pady=0)
+            tk.Label(right, text=":", bg=CARD, fg=DIM,
+                     font=(FONT, 9)).grid(row=i, column=1, padx=4)
+            tk.Label(right, text=v, bg=CARD, fg=TEXT, font=(FONT, 9),
+                     anchor="w", justify="left", wraplength=190).grid(
+                row=i, column=2, sticky="w")
+        return card
+
+    def _cores_panel(self, parent):
+        card, body = self._panel(parent, "Beban per Core / Thread", "cpu",
+                                 height=204)
+        cores = max(1, len(self.m.get("cores") or [0] * (self.hw["threads"] or 1)))
+        self.core_rows = []
+        note = (f"{self.hw['cores']} {tr('core fisik')} · "
+                f"{self.hw['threads']} {tr('Thread').lower()}"
+                + (f" ({tr('tanpa HT')})"
+                   if self.hw["cores"] == self.hw["threads"]
+                   else " (hyper-threading)"))
+        tk.Label(body, text=note, bg=CARD, fg=DIM, font=(FONT, 8),
+                 anchor="w").pack(fill="x", pady=(0, 4))
+        for i in range(cores):
+            color = CORE_COLORS[i % len(CORE_COLORS)]
+            row = tk.Frame(body, bg=CARD)
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text=f"Core {i}", bg=CARD, fg=TEXT,
+                     font=(FONT, 9), width=7, anchor="w").pack(side="left")
+            temp = tk.Label(row, text="", bg=CARD, fg=MUTED, width=6,
+                            anchor="e", font=(FONT, 9))
+            temp.pack(side="right", padx=(4, 0))
+            val = tk.Label(row, text="0%", bg=CARD, fg=color, width=5,
+                           anchor="e", font=(FONT, 9, "bold"))
+            val.pack(side="right")
+            spark = Spark(row, color, maxval=100, height=26, points=
+                          self.cfg.get("history", 90))
+            spark.pack(side="left", fill="x", expand=True, padx=(4, 8))
+            self.sparks.append(spark)
+            self.core_rows.append({"val": val, "temp": temp, "spark": spark})
+        return card
+
+    def _temp_panel(self, parent):
+        card, body = self._panel(parent, "Suhu Sistem", "temp", height=204)
+        self.temp_labels = {}
+        slots = temp_slots()
+        if not slots:
+            tk.Label(body, text=temp_missing_text(), bg=CARD, fg=MUTED,
+                     font=(FONT, 9), justify="left").pack(anchor="w", pady=6)
+        for i, (display, _chip, _label) in enumerate(slots[:5]):
+            row = tk.Frame(body, bg=CARD)
+            row.pack(fill="x", pady=3)
+            color = temp_color(self.m.get("temps", {}).get(display),
+                               self.cfg.get("temp_warn", 80))
+            bar = tk.Canvas(row, width=3, height=16, bg=CARD,
+                            highlightthickness=0, bd=0)
+            bar.pack(side="left", padx=(0, 6))
+            bar.create_rectangle(0, 0, 3, 16, fill=color, outline="")
+            tk.Label(row, text=display, bg=CARD, fg=MUTED,
+                     font=(FONT, 9), anchor="w").pack(side="left")
+            val = tk.Label(row, text="-", bg=CARD, fg=color,
+                           font=(FONT, 9, "bold"), anchor="e")
+            val.pack(side="right")
+            self.temp_labels[display] = (val, bar)
+        note = (f"{tr('Sumber:')} " +
+                ", ".join(sorted({s[1] for s in slots}))) if slots else ""
+        if note:
+            tk.Label(body, text=note, bg=CARD, fg=DIM, font=(FONT, 8),
+                     anchor="w").pack(fill="x", pady=(6, 0))
+        return card
+
+    def _disk_panel(self, parent):
+        card, body = self._panel(parent, "Informasi Disk", "disk", height=196)
+        self.w["disk_bar"] = ttk.Progressbar(
+            body, style="Green.Horizontal.TProgressbar", maximum=100, value=0)
+        self.w["disk_bar"].pack(fill="x", pady=(2, 5))
+        u = getattr(self, "disk_usage", psutil.disk_usage(ROOT_MOUNT))
+        line = tk.Frame(body, bg=CARD)
+        line.pack(fill="x")
+        self.w["disk_used"] = tk.Label(
+            line, text=f"{tr('Terpakai')} {hbytes(u.used)}", bg=CARD,
+            fg=GREEN, font=(FONT, 9))
+        self.w["disk_used"].pack(side="left")
+        self.w["disk_pct"] = tk.Label(line, text=f"{u.percent:.0f}%", bg=CARD,
+                                      fg=TEXT, font=(FONT, 9, "bold"))
+        self.w["disk_pct"].pack(side="right")
+        self.w["disk_free"] = tk.Label(
+            body, text=f"{tr('Bebas')} {hbytes(u.free)}  ·  "
+                       f"{tr('total')} {hbytes(u.total)}",
+            bg=CARD, fg=MUTED, font=(FONT, 8), anchor="w")
+        self.w["disk_free"].pack(fill="x")
+        self.w["disk_total"] = self.w["disk_free"]
+
+        rows = tk.Frame(body, bg=CARD)
+        rows.pack(fill="both", expand=True, pady=(7, 0))
+        kv = [
+            ("Model", self.hw["disk_model"]),
+            ("Tipe", self.hw.get("disk_type", "-")),
+            ("Mount", f"{ROOT_MOUNT}  ·  "
+                      f"{_fs_type(ROOT_MOUNT)}"),
+        ]
+        for i, (k, v) in enumerate(kv):
+            tk.Label(rows, text=k, bg=CARD, fg=MUTED, font=(FONT, 9),
+                     anchor="w", width=7).grid(row=i, column=0, sticky="w")
+            tk.Label(rows, text=":", bg=CARD, fg=DIM,
+                     font=(FONT, 9)).grid(row=i, column=1, padx=3)
+            tk.Label(rows, text=v, bg=CARD, fg=TEXT, font=(FONT, 9),
+                     anchor="w").grid(row=i, column=2, sticky="w")
+        return card
+
+    def _net_panel(self, parent):
+        card, body = self._panel(parent, "Informasi Jaringan", "net", height=196)
+        tk.Label(body, text=f"{tr('Antarmuka')}: {self.iface}", bg=CARD,
+                 fg=MUTED, font=(FONT, 8), anchor="w").pack(fill="x")
+        self.w["net_big"] = tk.Label(body, text="0 B/s", bg=CARD, fg=PINK,
+                                     font=(FONT, 15, "bold"), anchor="w")
+        self.w["net_big"].pack(fill="x", pady=(1, 0))
+        self.w["net_sub"] = tk.Label(body, text="↓ 0 B/s  ·  ↑ 0 B/s", bg=CARD,
+                                     fg=MUTED, font=(FONT, 9), anchor="w")
+        self.w["net_sub"].pack(fill="x")
+        spark = Spark(body, PINK, height=34)
+        spark.pack(fill="x", pady=(4, 4))
+        self.sparks.append(spark)
+        self.w["net_panel_spark"] = spark
+
+        info = self._iface_info()
+        self.net_addr = tk.Label(body, text=f"IP {info.get('ip', '-')}", bg=CARD,
+                                 fg=MUTED, font=(FONT, 8), anchor="w")
+        self.net_addr.pack(fill="x")
+        wifi = wifi_info(self.iface)
+        wifi_parts = []
+        if wifi.get("ssid"):
+            wifi_parts.append(wifi["ssid"])
+        if wifi.get("signal"):
+            wifi_parts.append(f"{tr('sinyal')} {wifi['signal']}")
+        self.net_ssid = tk.Label(body, text="  ·  ".join(wifi_parts) or "Wi-Fi",
+                                 bg=CARD, fg=MUTED, font=(FONT, 8), anchor="w",
+                                 wraplength=290, justify="left")
+        self.net_ssid.pack(fill="x")
+        return card
+
+    def _battery_panel(self, parent):
+        card, body = self._panel(parent, "Informasi Baterai", "battery",
+                                 height=196)
+        bat = read_battery() or {}
+        pct = bat.get("percent", 0)
+        bcolor = GREEN if pct >= 40 else (ORANGE if pct >= 15 else PINK)
+        top = tk.Frame(body, bg=CARD)
+        top.pack(fill="x")
+        pctwrap = tk.Frame(top, bg=CARD)
+        pctwrap.pack(side="left")
+        self.w["bat_pct"] = tk.Label(pctwrap, text=f"{pct:.0f}", bg=CARD,
+                                     fg=bcolor, font=(FONT, 21, "bold"),
+                                     anchor="w")
+        self.w["bat_pct"].pack(side="left")
+        self.w["bat_pct_unit"] = tk.Label(pctwrap, text="%", bg=CARD,
+                                          fg=bcolor, font=(FONT, 10),
+                                          anchor="w")
+        self.w["bat_pct_unit"].pack(side="left", anchor="s", padx=(3, 0),
+                                    pady=(0, 3))
+        self.w["bat_status"] = tk.Label(top, text=battery_status_text(bat),
+                                        bg=CARD, fg=bcolor,
+                                        font=(FONT, 9, "bold"), anchor="e")
+        self.w["bat_status"].pack(side="right", pady=(8, 0))
+        self.w["bat_bar"] = ttk.Progressbar(
+            body, style="Green.Horizontal.TProgressbar", maximum=100,
+            value=pct)
+        self.w["bat_bar"].pack(fill="x", pady=(3, 5))
+
+        rows = tk.Frame(body, bg=CARD)
+        rows.pack(fill="both", expand=True)
+        data = [
+            ("Kesehatan", battery_health_text(bat)),
+            ("Kapasitas", battery_capacity_text(bat)),
+            ("Daya", f"{fnum(bat.get('power', 0), 2)} W"),
+            ("Charger", "Tersambung (AC)" if (bat.get("plugged") or
+                                              bat.get("ac_online")) else
+                        "Tidak (Baterai)"),
+            ("Sisa waktu", battery_time_text(bat)),
+        ]
+        self.w["bat_vals"] = {}
+        for i, (k, v) in enumerate(data):
+            tk.Label(rows, text=k, bg=CARD, fg=MUTED, font=(FONT, 9),
+                     anchor="w", width=10).grid(row=i, column=0, sticky="w")
+            val = tk.Label(rows, text=v, bg=CARD, fg=TEXT, font=(FONT, 9),
+                           anchor="w")
+            val.grid(row=i, column=1, sticky="w")
+            self.w["bat_vals"][k] = val
+        return card
+
+    def _iface_info(self):
+        out = {"ip": "-", "mac": "-"}
+        try:
+            addrs = psutil.net_if_addrs().get(self.iface, [])
+            for a in addrs:
+                if a.family == 2:
+                    out["ip"] = a.address
+                elif (getattr(a, "family", None) ==
+                      getattr(psutil, "AF_LINK", -1)
+                      and a.address and a.address.count(":") == 5):
+                    out["mac"] = a.address
+                elif (a.address and len(a.address) == 17
+                      and a.address.count(":") == 5):
+                    out["mac"] = a.address
+            if out["mac"] == "-" and addrs:
+                last = addrs[-1].address
+                if last and len(last) == 17 and last.count(":") == 5:
+                    out["mac"] = last
+        except Exception:
+            pass
+        return out
+
+    def _wifi_summary(self):
+        wifi = wifi_info(self.iface)
+        parts = []
+        if wifi.get("ssid"):
+            parts.append(wifi["ssid"])
+        if wifi.get("signal"):
+            parts.append(f"{tr('sinyal')} {wifi['signal']}")
+        if wifi.get("freq"):
+            parts.append(wifi["freq"])
+        return "  ·  ".join(parts) if parts else ""
+
+    # --------------------------------------------------------- perf updater
+    def update_performance(self):
+        m = self.m
+        if not m:
+            return
+        w = self.w
+        cpu = m.get("cpu", 0)
+        warn = self.cfg.get("temp_warn", 80)
+
+        color = GREEN if cpu < 70 else (ORANGE if cpu < 90 else PINK)
+        self.set_big("cpu", f"{cpu:.0f}%", color)
+        w["cpu"]["sub"].config(text=ghz(m.get("freq", 0)))
+        pkg = m.get("temps", {}).get("CPU Package")
+        if pkg is not None:
+            w["cpu"]["badge"].config(text=f"{pkg:.0f} °C", fg=temp_color(pkg, warn))
+        else:
+            w["cpu"]["badge"].config(text="")
+        w["cpu"]["spark"].push(cpu)
+        w["gauge"].set(cpu, color)
+
+        vm = m.get("vm")
+        if vm:
+            self.set_big("ram", f"{vm.percent:.0f}%")
+            w["ram"]["sub"].config(
+                text=f"{hbytes(vm.used)} / {hbytes(vm.total)}  ·  "
+                     f"{tr('tersedia')} {hbytes(vm.available)}")
+            w["ram"]["spark"].push(vm.percent)
+
+        z = m.get("zram")
+        if z:
+            ratio = (z["orig"] / z["comp"]) if z["comp"] else 0
+            self.set_big("zram", hbytes(z["orig"]))
+            w["zram"]["sub"].config(
+                text=f"{tr('rasio')} {fnum(ratio, 1)}x  ·  "
+                     f"{hbytes(z['comp'])} {tr('di RAM')}  ·  {z['algo']}")
+            w["zram"]["spark"].push(z["orig"] / 1048576.0)
+        else:
+            self.set_big("zram", "-")
+            w["zram"]["sub"].config(text="ZRAM tidak aktif")
+
+        sw = m.get("swap")
+        if sw:
+            self.set_big("swap", hbytes(sw.used))
+            w["swap"]["sub"].config(
+                text=f"({sw.percent:.0f}%) {tr('dari')} {hbytes(sw.total)}  ·  "
+                     f"zram + /swap.img")
+            w["swap"]["spark"].push(sw.used / 1048576.0)
+
+        r = m.get("io_r", 0) / 1048576.0
+        wr = m.get("io_w", 0) / 1048576.0
+        self.set_big("disk", speed(r * 1048576 + wr * 1048576))
+        w["disk"]["sub"].config(
+            text=f"{tr('Baca')} {speed(r * 1048576)}  ·  "
+                 f"{tr('Tulis')} {speed(wr * 1048576)}")
+        w["disk"]["spark"].push(r + wr)
+
+        rx = m.get("rx", 0)
+        tx = m.get("tx", 0)
+        self.set_big("net", speed(rx + tx))
+        w["net"]["sub"].config(text=f"↓ {speed(rx)}  ·  ↑ {speed(tx)}")
+        w["net"]["spark"].push((rx + tx) / 1048576.0)
+        if "net_panel_spark" in w:
+            w["net_panel_spark"].push((rx + tx) / 1048576.0)
+            w["net_big"].config(text=speed(rx + tx))
+            w["net_sub"].config(text=f"↓ {speed(rx)}  ·  ↑ {speed(tx)}")
+
+        if hasattr(self, "stor_io") and self.stor_io.winfo_exists():
+            self.stor_io.push((m.get("io_r", 0) + m.get("io_w", 0)) / 1048576.0)
+            self.stor_io_lbl.config(
+                text=f"{tr('Baca')} {speed(m.get('io_r', 0))}  ·  "
+                     f"{tr('Tulis')} {speed(m.get('io_w', 0))}")
+
+        # per core
+        cores = m.get("cores") or []
+        temps = m.get("temps", {})
+        for i, row in enumerate(getattr(self, "core_rows", [])):
+            if i < len(cores):
+                p = cores[i]
+                row["val"].config(text=f"{p:.0f}%")
+                row["spark"].push(p)
+            t = temps.get(f"Core {i}")
+            if t is not None:
+                row["temp"].config(text=f"{t:.0f} °C", fg=temp_color(t, warn))
+
+        # panel suhu
+        for display, (val, bar) in getattr(self, "temp_labels", {}).items():
+            t = temps.get(display)
+            if t is None:
+                val.config(text="-")
+                continue
+            val.config(text=f"{t:.0f} °C", fg=temp_color(t, warn))
+            try:
+                bar.delete("all")
+                bar.create_rectangle(0, 0, 3, 16, fill=temp_color(t, warn), outline="")
+            except Exception:
+                pass
+
+        u = getattr(self, "disk_usage", None)
+        if u:
+            w["disk_bar"].config(value=u.percent)
+            w["disk_used"].config(
+                text=f"{tr('Terpakai')} {hbytes(u.used)}")
+            w["disk_free"].config(
+                text=f"{tr('Bebas')} {hbytes(u.free)}  ·  "
+                     f"{tr('total')} {hbytes(u.total)}")
+            w["disk_pct"].config(text=f"{u.percent:.0f}%")
+
+        # baterai
+        bat = m.get("battery")
+        if bat and "bat_pct" in w:
+            pct = bat.get("percent", 0)
+            bcolor = GREEN if pct >= 40 else (ORANGE if pct >= 15 else PINK)
+            w["bat_pct"].config(text=f"{pct:.0f}", fg=bcolor)
+            w["bat_pct_unit"].config(fg=bcolor)
+            status = battery_status_text(bat)
+            plugged = bat.get("plugged") or bat.get("ac_online")
+            stcolor = GREEN if plugged else (ORANGE if pct > 20 else PINK)
+            w["bat_status"].config(text=status, fg=stcolor)
+            style = ("Red.Horizontal.TProgressbar" if pct < 15 else
+                     "Orange.Horizontal.TProgressbar" if pct < 40 else
+                     "Green.Horizontal.TProgressbar")
+            w["bat_bar"].config(style=style, value=pct)
+            vals = w.get("bat_vals", {})
+            if "Kesehatan" in vals:
+                vals["Kesehatan"].config(text=battery_health_text(bat))
+            if "Kapasitas" in vals:
+                vals["Kapasitas"].config(text=battery_capacity_text(bat))
+            if "Daya" in vals:
+                vals["Daya"].config(text=f"{fnum(bat.get('power', 0), 2)} W")
+            if "Charger" in vals:
+                plugged_now = bat.get("plugged") or bat.get("ac_online")
+                vals["Charger"].config(
+                    text="Tersambung (AC)" if plugged_now
+                         else "Tidak (Baterai)")
+            if "Sisa waktu" in vals:
+                vals["Sisa waktu"].config(text=battery_time_text(bat))
+
+    # ------------------------------------------------------------------ proses
+    def build_processes(self, host):
+        page = tk.Frame(host, bg=BG)
+        outer = tk.Frame(page, bg=BG)
+        outer.pack(fill="both", expand=True, padx=12, pady=10)
+
+        top = tk.Frame(outer, bg=BG)
+        top.pack(fill="x")
+        tk.Label(top, text="Proses Sistem", bg=BG, fg=TEXT,
+                 font=(FONT, 14, "bold")).pack(side="left")
+        self.proc_summary = tk.Label(top, text="Memuat…", bg=BG, fg=MUTED,
+                                     font=(FONT, 9))
+        self.proc_summary.pack(side="right")
+        self.proc_top = tk.Label(outer, text="", bg=BG, fg=MUTED,
+                                 font=(FONT, 9), anchor="w")
+        self.proc_top.pack(fill="x", pady=(2, 8))
+
+        bar = tk.Frame(outer, bg=BG)
+        bar.pack(fill="x", pady=(0, 8))
+        tk.Label(bar, text="Cari", bg=BG, fg=MUTED,
+                 font=(FONT, 9)).pack(side="left", padx=(0, 6))
+        entry = tk.Entry(bar, textvariable=self.proc_search, bg=CARD,
+                         fg=TEXT, insertbackground=TEXT, relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER,
+                         highlightcolor=BLUE, font=(FONT, 10), width=28)
+        entry.pack(side="left", ipady=3)
+        self.proc_entry = entry
+
+        end = tk.Button(bar, text="Akhiri Tugas", command=self.end_task,
+                        bg="#8b2c28", fg="#ffffff", activebackground=PINK,
+                        activeforeground="#ffffff", relief="flat", bd=0,
+                        padx=10, pady=3, cursor="hand2",
+                        font=(FONT, 9, "bold"))
+        end.pack(side="right", padx=(6, 0))
+        refresh = tk.Button(bar, text="Segarkan", command=lambda: self.refresh_processes(True),
+                            bg=CARD, fg=TEXT, activebackground=BORDER,
+                            activeforeground=TEXT, relief="flat", bd=0,
+                            padx=10, pady=3, cursor="hand2",
+                            font=(FONT, 9))
+        refresh.pack(side="right", padx=(6, 0))
+        hint = tk.Label(bar, text="klik judul kolom untuk mengurutkan",
+                        bg=BG, fg=DIM, font=(FONT, 8))
+        hint.pack(side="right", padx=10)
+
+        tree_frame = tk.Frame(outer, bg=BORDER, highlightthickness=1,
+                              highlightbackground=BORDER)
+        tree_frame.pack(fill="both", expand=True)
+
+        cols = ("pid", "name", "user", "cpu", "ram", "rampct", "threads", "status")
+        self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
+                                 style="Dark.Treeview", selectmode="browse")
+        widths = {"pid": 62, "name": 300, "user": 120, "cpu": 70,
+                  "ram": 100, "rampct": 70, "threads": 60, "status": 95}
+        heads = {"pid": "PID",
+                 "name": "Process" if LANG == "en" else "Proses",
+                 "user": "Pengguna",
+                 "cpu": "CPU %", "ram": "RAM", "rampct": "RAM %",
+                 "threads": "Thread", "status": "Status"}
+        for c in cols:
+            self.tree.heading(c, text=tr(heads[c]),
+                              command=lambda k=c: self.sort_procs(k))
+            self.tree.column(c, width=widths[c], anchor="w" if c in
+                             ("name", "user", "status") else "e",
+                             stretch=(c == "name"))
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical",
+                            command=self.tree.yview,
+                            style="Dark.Vertical.TScrollbar")
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.tag_configure("odd", background=CARD_DARK)
+        self.tree.tag_configure("hi", foreground=ORANGE)
+        self.tree.tag_configure("own", foreground=BLUE)
+        self.tree.bind("<Double-1>", lambda e: self.proc_detail())
+
+        foot = tk.Frame(outer, bg=BG)
+        foot.pack(fill="x", pady=(6, 0))
+        tk.Label(foot, text="CPU % dihitung terhadap total seluruh core. "
+                            "Daftar diperbarui tiap 2 detik.",
+                 bg=BG, fg=DIM, font=(FONT, 8), anchor="w").pack(side="left")
+        self.proc_stamp_lbl = tk.Label(foot, text="", bg=BG, fg=DIM,
+                                       font=(FONT, 8))
+        self.proc_stamp_lbl.pack(side="right")
+        return page
+
+    def sort_procs(self, key):
+        if self.proc_sort[0] == key:
+            self.proc_sort = (key, not self.proc_sort[1])
+        else:
+            self.proc_sort = (key, key not in ("name", "user", "status", "pid"))
+        for c, title in (("pid", "PID"),
+                          ("name", "Process" if LANG == "en" else "Proses"),
+                          ("user", "Pengguna"),
+                          ("cpu", "CPU %"), ("ram", "RAM"), ("rampct", "RAM %"),
+                          ("threads", "Thread"), ("status", "Status")):
+            arrow = ""
+            if c == self.proc_sort[0]:
+                arrow = "  ▼" if self.proc_sort[1] else "  ▲"
+            self.tree.heading(c, text=tr(title) + arrow,
+                              command=lambda k=c: self.sort_procs(k))
+        self.render_procs()
+
+    def refresh_processes(self, force=False):
+        now = time.time()
+        if not force and now - self.proc_ts < 2:
+            return
+        if self.proc_thread and self.proc_thread.is_alive():
+            return
+        self.proc_thread = threading.Thread(target=self._proc_worker, daemon=True)
+        self.proc_thread.start()
+
+    def _proc_worker(self):
+        now_m = time.monotonic()
+        ncpu = psutil.cpu_count(logical=True) or 1
+        hide_kernel = bool(self.cfg.get("hide_kernel", True))
+        rows = []
+        try:
+            for p in psutil.process_iter(["pid", "name", "username", "status",
+                                          "memory_info", "num_threads"]):
+                try:
+                    info = p.info
+                    pid = info["pid"]
+                    if pid <= 0:
+                        continue
+                    if (hide_kernel and OS_NAME == "Linux"
+                            and not os.path.exists(f"/proc/{pid}/exe")):
+                        continue
+                    mem = info["memory_info"].rss if info["memory_info"] else 0
+                    total = 0.0
+                    try:
+                        ct = p.cpu_times()
+                        total = ct.user + ct.system
+                    except Exception:
+                        pass
+                    prev = self.proc_prev.get(pid)
+                    pct = 0.0
+                    if prev and now_m > prev[1] + 0.001:
+                        pct = max(0.0, (total - prev[0]) / (now_m - prev[1]) *
+                                  100.0 / ncpu)
+                    self.proc_prev[pid] = (total, now_m)
+                    name = info["name"] or f"pid {pid}"
+                    rows.append({
+                        "pid": pid,
+                        "name": name,
+                        "user": info["username"] or "-",
+                        "status": info["status"] or "-",
+                        "cpu": pct,
+                        "ram": mem,
+                        "threads": info["num_threads"] or 0,
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied,
+                        psutil.ZombieProcess):
+                    continue
+            # buang entri proses yang sudah mati
+            alive = {r["pid"] for r in rows}
+            for pid in list(self.proc_prev):
+                if pid not in alive:
+                    self.proc_prev.pop(pid, None)
+            self.proc_rows = rows
+            self.proc_ts = time.time()
+        except Exception:
+            pass
+
+    def render_procs(self):
+        if "tree" not in self.__dict__:
+            return
+        try:
+            if not self.tree.winfo_exists():
+                return
+        except Exception:
+            return
+        rows = list(self.proc_rows)
+        if not rows:
+            return
+        q = self.proc_search.get().strip().lower()
+        if q:
+            rows = [r for r in rows
+                    if q in r["name"].lower() or q in r["user"].lower()
+                    or q in str(r["pid"])]
+        key, rev = self.proc_sort
+        keys = {
+            "pid": lambda r: r["pid"],
+            "name": lambda r: r["name"].lower(),
+            "user": lambda r: r["user"].lower(),
+            "cpu": lambda r: r["cpu"],
+            "ram": lambda r: r["ram"],
+            "rampct": lambda r: r["ram"],
+            "threads": lambda r: r["threads"],
+            "status": lambda r: r["status"],
+        }
+        rows.sort(key=keys.get(key, keys["ram"]), reverse=rev)
+
+        vm = psutil.virtual_memory()
+        total_mem = vm.total
+        total_rss = sum(r["ram"] for r in self.proc_rows)
+        self.proc_summary.config(
+            text=f"{len(self.proc_rows)} {tr('proses')}  ·  RAM "
+                 f"{hbytes(vm.used)} / {hbytes(total_mem)} "
+                 f"({vm.percent:.0f}%)  ·  RSS total {hbytes(total_rss)}")
+        top = sorted(self.proc_rows, key=lambda r: r["ram"], reverse=True)[:3]
+        self.proc_top.config(
+            text=f"{tr('Pemakan RAM teratas:')}  " +
+                 "   ·   ".join(f"{r['name']} {hbytes(r['ram'])}" for r in top))
+
+        desired = []
+        for r in rows:
+            iid = str(r["pid"])
+            vals = (r["pid"], r["name"], r["user"], fnum(r["cpu"], 1),
+                    hbytes(r["ram"]) if r["ram"] >= 1048576
+                    else f"{fnum(r['ram'] / 1048576.0, 1)} MB",
+                    fnum(r["ram"] / total_mem * 100, 1),
+                    r["threads"], status_text(r["status"]))
+            tag = "hi" if r["ram"] / total_mem * 100 >= 5 else "odd"
+            if r["pid"] == os.getpid():
+                tag = "own"
+            if self.tree.exists(iid):
+                self.tree.item(iid, values=vals, tags=(tag,))
+            else:
+                self.tree.insert("", "end", iid=iid, values=vals, tags=(tag,))
+            desired.append(iid)
+        existing = set(self.tree.get_children())
+        for iid in existing - set(desired):
+            self.tree.delete(iid)
+        # pastikan urutan sesuai
+        for idx, iid in enumerate(desired):
+            if self.tree.index(iid) != idx:
+                self.tree.move(iid, "", idx)
+        try:
+            self.proc_stamp_lbl.config(
+                text=f"{tr('Diperbarui')} " +
+                     time.strftime("%H:%M:%S", time.localtime(self.proc_ts)))
+        except Exception:
+            pass
+
+    def _show_dialog(self, title, message, buttons, wrap=430):
+        win = tk.Toplevel(self)
+        win.title(tr(title))
+        win.configure(bg=CARD)
+        win.resizable(False, False)
+        win.transient(self)
+        result = {"value": None}
+
+        def close(value):
+            result["value"] = value
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            win.destroy()
+
+        body = tk.Frame(win, bg=CARD)
+        body.pack(fill="both", expand=True, padx=22, pady=(18, 14))
+        tk.Label(body, text=message, bg=CARD, fg=TEXT, font=(FONT, 10),
+                 justify="left", anchor="w", wraplength=wrap).pack(fill="x")
+        row = tk.Frame(body, bg=CARD)
+        row.pack(fill="x", pady=(16, 0))
+        for text, value, color in buttons:
+            fg = "#ffffff" if color not in (CARD_DARK,) else TEXT
+            tk.Button(row, text=text, command=lambda v=value: close(v),
+                      bg=color, fg=fg, activebackground=mix(color, "#ffffff", .15),
+                      activeforeground=fg, relief="flat", bd=0, padx=16, pady=5,
+                      cursor="hand2", font=(FONT, 9, "bold" if color != CARD_DARK
+                                            else "normal")).pack(side="right", padx=(8, 0))
+        win.bind("<Escape>", lambda e: close(None))
+        win.protocol("WM_DELETE_WINDOW", lambda: close(None))
+        win.update_idletasks()
+        w = max(360, win.winfo_reqwidth())
+        h = win.winfo_reqheight()
+        px = self.winfo_rootx() + (self.winfo_width() - w) // 2
+        py = self.winfo_rooty() + (self.winfo_height() - h) // 2
+        win.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
+        win.grab_set()
+        win.focus_force()
+        self.wait_window(win)
+        return result["value"]
+
+    def proc_detail(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        pid = int(sel[0])
+        try:
+            p = psutil.Process(pid)
+            with p.oneshot():
+                lines = [
+                    f"{tr('Nama')}: {p.name()}",
+                    f"PID: {pid}   PPID: {p.ppid()}",
+                    f"{tr('Pengguna')}: {p.username()}",
+                    f"{tr('Status')}: {status_text(p.status())}",
+                    f"RAM (RSS): {hbytes(p.memory_info().rss)}",
+                    f"{tr('Thread')}: {p.num_threads()}",
+                    f"{tr('CPU waktu')}: {fnum(p.cpu_times().user, 1)} "
+                    f"{tr('dtk')}",
+                    f"Command: {' '.join(p.cmdline())[:180] or '-'}",
+                ]
+            self._show_dialog(f"{tr('Detail')} PID {pid}", "\n".join(lines),
+                              [("Tutup", True, CARD_DARK)], wrap=520)
+        except Exception as exc:
+            self._show_dialog("Detail proses", str(exc),
+                              [("Tutup", True, CARD_DARK)])
+
+    def end_task(self):
+        sel = self.tree.selection()
+        if not sel:
+            self._show_dialog("Akhiri tugas", tr("Pilih satu proses dulu."),
+                              [("Tutup", True, CARD_DARK)])
+            return
+        pid = int(sel[0])
+        name = self.tree.item(sel[0], "values")[1]
+        if pid in (1, os.getpid()):
+            self._show_dialog(
+                "Akhiri tugas",
+                tr("Proses ini dilindungi dan tidak bisa diakhiri."),
+                [("Tutup", True, CARD_DARK)])
+            return
+        if LANG == "en":
+            message = (f"End process '{name}' (PID {pid})?\n\n"
+                       "Unsaved data in that application may be lost.")
+        else:
+            message = (f"Akhiri proses '{name}' (PID {pid})?\n\n"
+                       "Data yang belum disimpan di aplikasi tersebut bisa hilang.")
+        ok = self._show_dialog(
+            "Akhiri tugas", message,
+            [("Ya, akhiri", True, PINK), ("Batal", False, CARD_DARK)])
+        if not ok:
+            return
+        try:
+            proc = psutil.Process(pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except psutil.TimeoutExpired:
+                pass
+            self.refresh_processes(force=True)
+            self.after(800, lambda: self.refresh_processes(force=True))
+        except Exception as exc:
+            self._show_dialog("Gagal mengakhiri proses", str(exc),
+                              [("Tutup", True, CARD_DARK)])
+
+    # ----------------------------------------------------------------- hardware
+    def build_hardware(self, host):
+        page = ScrollPage(host)
+        wrap = tk.Frame(page.inner, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=12, pady=12)
+        wrap.columnconfigure(0, weight=1, uniform="h")
+        wrap.columnconfigure(1, weight=1, uniform="h")
+
+        hw = self.hw
+        vm = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        z = read_zram() or {}
+
+        proc_card, proc_body = self._section(wrap, "Prosesor", "cpu")
+        proc_card.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=(0, 10))
+        self.kv(proc_body, [
+            ("Model", hw["cpu_model"]),
+            ("Arsitektur", hw["arch"]),
+            ("Core fisik", str(hw["cores"])),
+            ("Thread", str(hw["threads"])),
+            ("Clock dasar", ghz(hw["base_ghz"] * 1000)),
+            ("Clock boost", ghz(hw["boost"])),
+            ("Cache L1", (hw["l1"] or "-").replace(" (instruksi)", " (ins.)")),
+            ("Cache L2", cache_fmt(hw["l2"])),
+            ("Governor", hw["governor"]),
+        ])
+
+        mem_card, mem_body = self._section(wrap, "Memori", "ram")
+        mem_card.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=(0, 10))
+        self.kv(mem_body, [
+            ("RAM total", hbytes(vm.total)),
+            ("Terpakai", f"{hbytes(vm.used)} ({vm.percent:.0f}%)"),
+            ("Tersedia", hbytes(vm.available)),
+            ("Cache/buffer", hbytes(getattr(vm, "cached", 0))),
+            ("Swap total", hbytes(swap.total)),
+            ("Swap terpakai", f"{hbytes(swap.used)} ({swap.percent:.0f}%)"),
+            ("ZRAM", f"{hbytes(z.get('orig', 0))} data · {z.get('algo', '-')}"),
+        ])
+
+        sys_card, sys_body = self._section(wrap, "Sistem & Perangkat", "info")
+        sys_card.grid(row=1, column=0, sticky="nsew", padx=(0, 5), pady=(0, 10))
+        self.kv(sys_body, [
+            ("Produk", hw["product"]),
+            ("Vendor", hw["vendor"]),
+            ("Motherboard", hw["board"]),
+            ("BIOS", f"{hw['bios']} ({hw['bios_date']})"),
+            ("Kernel", hw["kernel"]),
+            ("Sistem operasi", hw["os"]),
+            ("Desktop", hw["desktop"]),
+            ("Hostname", hw["hostname"]),
+        ])
+
+        disk_card, disk_body = self._section(wrap, "Penyimpanan & Grafis", "disk")
+        disk_card.grid(row=1, column=1, sticky="nsew", padx=(5, 0), pady=(0, 10))
+        root_u = psutil.disk_usage(ROOT_MOUNT)
+        self.kv(disk_body, [
+            ("Disk", f"{hw['disk_model']} · {hbytes(hw['disk_size'])}"),
+            ("Tipe", hw.get("disk_type", "-")),
+            ("Root", f"{hbytes(root_u.used)} / {hbytes(root_u.total)} "
+                     f"({root_u.percent:.0f}%)"),
+            ("GPU", hw["gpu"]),
+            ("Sensor suhu", ", ".join(sorted({s[1] for s in temp_slots()})) or "-"),
+        ])
+
+        bat = read_battery() or {}
+        if not bat:
+            bat_card, bat_body = self._section(wrap, "Baterai", "battery")
+            bat_card.grid(row=2, column=0, columnspan=2, sticky="nsew",
+                          pady=(0, 10))
+            tk.Label(bat_body, text="Tidak ada baterai terdeteksi.",
+                     bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w").pack(
+                fill="x", pady=4)
+            return page
+        bat_card, bat_body = self._section(wrap, "Baterai", "battery")
+        bat_card.grid(row=2, column=0, columnspan=2, sticky="nsew",
+                      pady=(0, 10))
+        cols = tk.Frame(bat_body, bg=CARD)
+        cols.pack(fill="x")
+        left = tk.Frame(cols, bg=CARD)
+        left.pack(side="left", fill="both", expand=True)
+        right = tk.Frame(cols, bg=CARD)
+        right.pack(side="left", fill="both", expand=True, padx=(18, 0))
+        cycles = bat.get("cycles", -1)
+        self.kv(left, [
+            ("Status", battery_status_text(bat)),
+            ("Charger", "Tersambung" if (bat.get("plugged") or
+                                         bat.get("ac_online")) else
+                        "Tidak tersambung"),
+            ("Sumber daya", battery_source_text(bat)),
+            ("Persentase", f"{fnum(bat.get('percent', 0), 0)}%"),
+            ("Kesehatan", battery_health_text(bat)),
+            ("Sisa waktu", battery_time_text(bat)),
+            ("Daya", f"{fnum(bat.get('power', 0), 2)} W"),
+            ("Tegangan", f"{fnum(bat.get('voltage', 0), 2)} V"),
+        ])
+        def wh(value):
+            return f"{fnum(value, 1)} Wh" if value and value > 0 else "-"
+
+        self.kv(right, [
+            ("Kap. desain", wh(bat.get("energy_design", 0))),
+            ("Kap. penuh", wh(bat.get("energy_full", 0))),
+            ("Sisa energi", wh(bat.get("energy_now", 0))),
+            ("Siklus", str(cycles) if cycles >= 0 else "-"),
+            ("Teknologi", bat.get("technology", "-")),
+            ("Model", bat.get("model", "-")),
+            ("Pabrikan", bat.get("manufacturer", "-")),
+        ])
+        return page
+
+    def _section(self, parent, title, icon):
+        card = Card(parent)
+        hdr = tk.Frame(card, bg=CARD)
+        hdr.pack(fill="x", padx=12, pady=(10, 4))
+        make_icon(hdr, icon, 16, MUTED).pack(side="left")
+        tk.Label(hdr, text=title, bg=CARD, fg=TEXT,
+                 font=(FONT, 11, "bold")).pack(side="left", padx=6)
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="both", expand=True, padx=12, pady=(2, 10))
+        return card, body
+
+    def kv(self, body, rows):
+        for i, (k, v) in enumerate(rows):
+            tk.Label(body, text=k, bg=CARD, fg=MUTED, font=(FONT, 9),
+                     anchor="w", width=18).grid(row=i, column=0, sticky="w",
+                                                pady=1)
+            tk.Label(body, text=":", bg=CARD, fg=DIM, font=(FONT, 9)).grid(
+                row=i, column=1, padx=4, sticky="w")
+            tk.Label(body, text=str(v), bg=CARD, fg=TEXT, font=(FONT, 9),
+                     anchor="w", justify="left",
+                     wraplength=250).grid(row=i, column=2, sticky="w", pady=1)
+        body.columnconfigure(2, weight=1)
+
+    def _battery_text(self):
+        bat = self.hw.get("bat", {})
+        if not bat:
+            return "Tidak terdeteksi"
+        cap = bat.get("capacity")
+        status = bat.get("status", "")
+        return f"{cap}% · {status}" if cap else status or "-"
+
+    def _power_text(self):
+        bat = self.hw.get("bat", {})
+        try:
+            p = int(bat.get("power_now", 0)) / 1e6
+            e = int(bat.get("energy_now", 0)) / 1e6
+            full = int(bat.get("energy_full", 0)) / 1e6
+            return f"{fnum(p, 2)} W · {fnum(e, 1)} / {fnum(full, 1)} Wh"
+        except Exception:
+            return "-"
+
+    # ------------------------------------------------------------------ storage
+    def build_storage(self, host):
+        page = ScrollPage(host)
+        wrap = tk.Frame(page.inner, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=12, pady=12)
+
+        card, body = self._section(wrap, "Ringkasan Penyimpanan", "disk")
+        card.pack(fill="x")
+        u = psutil.disk_usage(ROOT_MOUNT)
+        self.stor_bar = ttk.Progressbar(body, style="Green.Horizontal.TProgressbar",
+                                        maximum=100, value=u.percent)
+        self.stor_bar.pack(fill="x", pady=(0, 6))
+        line = tk.Frame(body, bg=CARD)
+        line.pack(fill="x")
+        self.stor_total = tk.Label(line, text=f"{tr('Total')} {hbytes(u.total)}",
+                                   bg=CARD, fg=TEXT, font=(FONT, 10))
+        self.stor_total.pack(side="left")
+        self.stor_used = tk.Label(line, text=f"{tr('Terpakai')} {hbytes(u.used)}",
+                                  bg=CARD, fg=GREEN, font=(FONT, 10))
+        self.stor_used.pack(side="left", padx=14)
+        self.stor_free = tk.Label(line, text=f"{tr('Tersedia')} {hbytes(u.free)}",
+                                  bg=CARD, fg=MUTED, font=(FONT, 10))
+        self.stor_free.pack(side="left")
+        self.stor_pct = tk.Label(line, text=f"{u.percent:.0f}%", bg=CARD,
+                                 fg=TEXT, font=(FONT, 10, "bold"))
+        self.stor_pct.pack(side="right")
+
+        part_card, part_body = self._section(wrap, "Partisi & Mount", "disk")
+        part_card.pack(fill="both", expand=True, pady=(10, 0))
+        cols = ("dev", "mount", "fs", "total", "used", "free", "pct")
+        self.part_tree = ttk.Treeview(part_body, columns=cols, show="headings",
+                                      style="Dark.Treeview", height=6)
+        for c, t, w in (("dev", "Perangkat", 150), ("mount", "Mount", 170),
+                        ("fs", "Sistem file", 90), ("total", "Total", 90),
+                        ("used", "Terpakai", 100), ("free", "Bebas", 90),
+                        ("pct", "Pakai", 70)):
+            self.part_tree.heading(c, text=tr(t))
+            self.part_tree.column(c, width=w,
+                                  anchor="w" if c in ("dev", "mount", "fs") else "e",
+                                  stretch=c == "mount")
+        vsb = ttk.Scrollbar(part_body, orient="vertical",
+                            command=self.part_tree.yview,
+                            style="Dark.Vertical.TScrollbar")
+        self.part_tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self.part_tree.pack(side="left", fill="both", expand=True)
+        self.part_tree.tag_configure("odd", background=CARD_DARK)
+
+        io_card, io_body = self._section(wrap, "Aktivitas Disk", "gauge")
+        io_card.pack(fill="x", pady=(10, 0))
+        self.stor_io = Spark(io_body, TEAL, height=74)
+        self.stor_io.pack(fill="x")
+        self.sparks.append(self.stor_io)
+        self.stor_io_lbl = tk.Label(io_body, text="", bg=CARD, fg=MUTED,
+                                    font=(FONT, 9), anchor="w")
+        self.stor_io_lbl.pack(fill="x", pady=(4, 0))
+        return page
+
+    def fill_storage(self):
+        if "part_tree" not in self.__dict__:
+            return
+        self.part_tree.delete(*self.part_tree.get_children())
+        for i, part in enumerate(psutil.disk_partitions(all=False)):
+            if part.device.startswith("/dev/loop"):
+                continue
+            try:
+                u = psutil.disk_usage(part.mountpoint)
+            except PermissionError:
+                continue
+            except Exception:
+                continue
+            self.part_tree.insert(
+                "", "end", values=(part.device, part.mountpoint, part.fstype,
+                                   hbytes(u.total), hbytes(u.used),
+                                   hbytes(u.free), f"{u.percent:.0f}%"),
+                tags=("odd" if i % 2 else "",))
+
+    # ------------------------------------------------------------------ network
+    def build_network(self, host):
+        page = ScrollPage(host)
+        wrap = tk.Frame(page.inner, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=12, pady=12)
+
+        info = self._iface_info()
+        card, body = self._section(wrap, "Koneksi Aktif", "net")
+        card.pack(fill="x")
+        left = tk.Frame(body, bg=CARD)
+        left.pack(side="left", fill="y")
+        tk.Label(left, text=f"Interface: {self.iface}", bg=CARD, fg=MUTED,
+                 font=(FONT, 9), anchor="w").pack(fill="x")
+        self.net_page_big = tk.Label(left, text="0 B/s", bg=CARD, fg=PINK,
+                                     font=(FONT, 21, "bold"), anchor="w")
+        self.net_page_big.pack(fill="x")
+        self.net_page_sub = tk.Label(left, text="↓ 0 B/s  ·  ↑ 0 B/s", bg=CARD,
+                                     fg=MUTED, font=(FONT, 9), anchor="w")
+        self.net_page_sub.pack(fill="x")
+        self.net_page_ip = tk.Label(left, text=f"IP {info.get('ip', '-')}  ·  "
+                                               f"MAC {info.get('mac', '-')}",
+                                     bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w")
+        self.net_page_ip.pack(fill="x", pady=(6, 0))
+        wifi = wifi_info(self.iface)
+        self.net_page_wifi = tk.Label(
+            left, text=self._wifi_line(wifi), bg=CARD, fg=MUTED,
+            font=(FONT, 9), anchor="w")
+        self.net_page_wifi.pack(fill="x")
+        self.net_page_spark = Spark(body, PINK, height=100)
+        self.net_page_spark.pack(side="right", fill="both", expand=True,
+                                 padx=(16, 0))
+        self.sparks.append(self.net_page_spark)
+
+        tbl_card, tbl_body = self._section(wrap, "Antarmuka Jaringan", "list")
+        tbl_card.pack(fill="both", expand=True, pady=(10, 0))
+        cols = ("if", "state", "ip", "mac", "speed", "rx", "tx")
+        self.net_tree = ttk.Treeview(tbl_body, columns=cols, show="headings",
+                                     style="Dark.Treeview", height=6)
+        for c, t, w in (("if", "Antarmuka", 120), ("state", "Status", 80),
+                        ("ip", "IPv4", 140), ("mac", "MAC", 150),
+                        ("speed", "Kecepatan", 100), ("rx", "Diterima", 110),
+                        ("tx", "Dikirim", 110)):
+            self.net_tree.heading(c, text=tr(t))
+            self.net_tree.column(c, width=w, anchor="w" if c in
+                                 ("if", "ip", "mac") else "e", stretch=c == "ip")
+        vsb = ttk.Scrollbar(tbl_body, orient="vertical",
+                            command=self.net_tree.yview,
+                            style="Dark.Vertical.TScrollbar")
+        self.net_tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self.net_tree.pack(side="left", fill="both", expand=True)
+        self.net_tree.tag_configure("odd", background=CARD_DARK)
+
+        wifi_card, wifi_body = self._section(wrap, "Detail Wi-Fi", "net")
+        wifi_card.pack(fill="x", pady=(10, 0))
+        self.wifi_body = wifi_body
+        self.fill_network_tables()
+        return page
+
+    def _wifi_line(self, wifi):
+        parts = []
+        if wifi.get("ssid"):
+            parts.append(f"SSID {wifi['ssid']}")
+        if wifi.get("signal"):
+            parts.append(f"sinyal {wifi['signal']}")
+        if wifi.get("bitrate"):
+            parts.append(wifi["bitrate"].split()[0] + " Mb/s")
+        if wifi.get("freq"):
+            parts.append(wifi["freq"])
+        return "  ·  ".join(parts) if parts else "Bukan koneksi Wi-Fi"
+
+    def fill_network_tables(self):
+        if "net_tree" not in self.__dict__:
+            return
+        self.net_tree.delete(*self.net_tree.get_children())
+        addrs = psutil.net_if_addrs()
+        stats = psutil.net_if_stats()
+        counters = psutil.net_io_counters(pernic=True)
+        try:
+            import socket
+            af_link = getattr(psutil, "AF_LINK", None) or getattr(
+                socket, "AF_PACKET", None)
+        except Exception:
+            af_link = getattr(psutil, "AF_LINK", None)
+        for i, (name, st) in enumerate(stats.items()):
+            ip = "-"
+            mac = "-"
+            for a in addrs.get(name, []):
+                if a.family == 2:
+                    ip = a.address
+                elif (af_link is not None and a.family == af_link
+                      and a.address and a.address.count(":") == 5):
+                    mac = a.address
+            cn = counters.get(name)
+            self.net_tree.insert(
+                "", "end", values=(name, "UP" if st.isup else "DOWN", ip, mac,
+                                   f"{st.speed} Mb/s" if st.speed else "-",
+                                   hbytes(cn.bytes_recv) if cn else "-",
+                                   hbytes(cn.bytes_sent) if cn else "-"),
+                tags=("odd" if i % 2 else "",))
+        # detail wifi
+        if self.wifi_body.winfo_exists():
+            for child in self.wifi_body.winfo_children():
+                child.destroy()
+            wifi = wifi_info(self.iface)
+            rows = [
+                ("SSID", wifi.get("ssid", "-")),
+                ("Sinyal", wifi.get("signal", "-")),
+                ("Frekuensi", wifi.get("freq", "-")),
+                ("Kecepatan link", wifi.get("bitrate", "-")),
+                ("Antarmuka", self.iface),
+            ]
+            for k, v in rows:
+                row = tk.Frame(self.wifi_body, bg=CARD)
+                row.pack(fill="x", pady=1)
+                tk.Label(row, text=k, bg=CARD, fg=MUTED, font=(FONT, 9),
+                         width=14, anchor="w").pack(side="left")
+                tk.Label(row, text=v, bg=CARD, fg=TEXT, font=(FONT, 9),
+                         anchor="w").pack(side="left")
+
+    def update_network(self):
+        m = self.m
+        if not m:
+            return
+        rx = m.get("rx", 0)
+        tx = m.get("tx", 0)
+        self.net_page_big.config(text=speed(rx + tx))
+        self.net_page_sub.config(text=f"↓ {speed(rx)}  ·  ↑ {speed(tx)}")
+        self.net_page_spark.push((rx + tx) / 1048576.0)
+        if int(time.time()) % 10 == 0:
+            self.fill_network_tables()
+
+    # ------------------------------------------------------------------ settings
+    def build_settings(self, host):
+        page = ScrollPage(host)
+        wrap = tk.Frame(page.inner, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=12, pady=12)
+        card, body = self._section(wrap, "Pengaturan", "gear")
+        card.pack(fill="x")
+
+        self.row_interval = ChoiceRow(
+            body, "Interval pembaruan",
+            [(1, "1 detik"), (2, "2 detik"), (3, "3 detik")],
+            int(self.cfg.get("interval", 1)), self._apply_interval)
+        self.row_interval.pack(fill="x", pady=4)
+
+        self.row_history = ChoiceRow(
+            body, "Riwayat grafik",
+            [(45, "45 titik"), (60, "60 titik"), (120, "120 titik")],
+            int(self.cfg.get("history", 60)), self._apply_history)
+        self.row_history.pack(fill="x", pady=4)
+
+        self.row_language = ChoiceRow(
+            body, "Bahasa",
+            [("auto", "Otomatis (sistem)"), ("id", "Indonesia"),
+             ("en", "English")],
+            self.cfg.get("language", "auto"), self._apply_language)
+        self.row_language.pack(fill="x", pady=4)
+
+        self.row_ontop = ToggleRow(
+            body, "Selalu di atas jendela lain",
+            bool(self.cfg.get("ontop", False)), self._apply_ontop)
+        self.row_ontop.pack(fill="x", pady=4)
+
+        self.row_kernel = ToggleRow(
+            body, "Sembunyikan thread kernel di daftar proses",
+            bool(self.cfg.get("hide_kernel", True)), self._apply_kernel)
+        self.row_kernel.pack(fill="x", pady=4)
+
+        temp_row = tk.Frame(body, bg=CARD)
+        temp_row.pack(fill="x", pady=4)
+        tk.Label(temp_row, text="Ambang suhu peringatan", bg=CARD, fg=TEXT,
+                 font=(FONT, 10), width=32, anchor="w").pack(side="left")
+        self.var_warn = tk.IntVar(value=int(self.cfg.get("temp_warn", 80)))
+        spin = tk.Spinbox(temp_row, from_=50, to=100, increment=5, width=5,
+                          textvariable=self.var_warn, bg=CARD_DARK, fg=TEXT,
+                          buttonbackground=BORDER, relief="flat",
+                          insertbackground=TEXT, font=(FONT, 10),
+                          command=self._apply_warn)
+        spin.pack(side="left")
+        tk.Label(temp_row, text="°C", bg=CARD, fg=MUTED,
+                 font=(FONT, 9)).pack(side="left", padx=4)
+        spin.bind("<FocusOut>", lambda e: self._apply_warn())
+
+        note = tk.Label(body, text="Pengaturan disimpan otomatis di "
+                                   "~/.config/diknom-monitor/config.json",
+                        bg=CARD, fg=DIM, font=(FONT, 8), anchor="w")
+        note.pack(fill="x", pady=(10, 0))
+
+        info_card, info_body = self._section(wrap, "Tentang Aplikasi", "info")
+        info_card.pack(fill="x", pady=(10, 0))
+        tk.Label(info_body, text=about_short_text(), bg=CARD, fg=MUTED,
+                 font=(FONT, 9), justify="left", anchor="w",
+                 wraplength=760).pack(fill="x")
+        return page
+
+    def _apply_interval(self, value):
+        self.cfg["interval"] = int(value)
+        self._save_cfg()
+        self.sidebar_interval.config(
+            text=f"{tr('Interval')}: {self.cfg['interval']} {tr('dtk')}")
+
+    def _apply_language(self, value):
+        global LANG
+        self.cfg["language"] = value
+        self._save_cfg()
+        new_lang = resolve_language(value)
+        if new_lang != LANG:
+            LANG = new_lang
+            self.after(80, self._rebuild_ui)
+
+    def _rebuild_ui(self):
+        page = self.current_page or self.cfg.get("page", "performance")
+        try:
+            self.proc_search.set("")
+        except Exception:
+            pass
+        for child in list(self.winfo_children()):
+            child.destroy()
+        self.w = {}
+        self.sparks = []
+        self.pages = {}
+        self.nav_buttons = {}
+        self.tab_buttons = {}
+        self.core_rows = []
+        self.temp_labels = {}
+        self.proc_rows = []
+        self.proc_ts = 0.0
+        self.proc_shown = 0.0
+        self.proc_prev.clear()
+        self._build_shell()
+        self.show_page(page)
+
+    def _apply_history(self, value):
+        n = int(value)
+        self.cfg["history"] = n
+        self._save_cfg()
+        for spark in self.sparks:
+            if spark.winfo_exists():
+                spark.set_points(n)
+
+    def _apply_ontop(self, value):
+        self.cfg["ontop"] = bool(value)
+        self.attributes("-topmost", self.cfg["ontop"])
+        self._save_cfg()
+
+    def _apply_kernel(self, value):
+        self.cfg["hide_kernel"] = bool(value)
+        self._save_cfg()
+        self.proc_prev.clear()
+        self.refresh_processes(force=True)
+
+    def _apply_warn(self):
+        try:
+            self.cfg["temp_warn"] = int(self.var_warn.get())
+            self._save_cfg()
+        except Exception:
+            pass
+
+    # --------------------------------------------------------------------- about
+    def build_about(self, host):
+        page = ScrollPage(host)
+        wrap = tk.Frame(page.inner, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=12, pady=12)
+        card, body = self._section(wrap, "DikNom System Monitor", "info")
+        card.pack(fill="x")
+        head = tk.Frame(body, bg=CARD)
+        head.pack(fill="x", pady=(0, 8))
+        logo = tk.Canvas(head, width=96, height=68, bg=CARD,
+                         highlightthickness=0, bd=0)
+        logo.pack(side="left")
+        draw_monitor(logo, 12, 8, 72, 50, BLUE)
+        text = tk.Frame(head, bg=CARD)
+        text.pack(side="left", padx=12)
+        tk.Label(text, text="DikNom System Monitor", bg=CARD, fg=TEXT,
+                 font=(FONT, 17, "bold"), anchor="w").pack(fill="x")
+        tk.Label(text, text=f"DSM v{VERSION}  ·  "
+                            f"{tr('Monitor ringan untuk Linux')}",
+                 bg=CARD, fg=MUTED, font=(FONT, 10), anchor="w").pack(fill="x")
+        tk.Label(text, text="Pengembang: DikNom", bg=CARD, fg=GREEN,
+                 font=(FONT, 9, "bold"), anchor="w").pack(fill="x", pady=(3, 0))
+        tk.Label(text, text="Monitor • Analisis • Optimasi", bg=CARD, fg=DIM,
+                 font=(FONT, 9), anchor="w").pack(fill="x", pady=(3, 0))
+        tk.Label(body, text=about_long_text(), bg=CARD, fg=MUTED,
+                 font=(FONT, 9), justify="left", anchor="w",
+                 wraplength=780).pack(fill="x")
+        return page
+
+    # -------------------------------------------------------------------- close
+    def on_close(self):
+        try:
+            self.update_idletasks()
+            self.cfg["width"] = self.winfo_width()
+            self.cfg["height"] = self.winfo_height()
+            self._save_cfg()
+        except Exception:
+            pass
+        self.destroy()
+
+
+def status_text(status):
+    label = STATUS_ID.get(status, status)
+    if LANG == "en":
+        return STATUS_EN.get(label, label)
+    return label
+
+
+STATUS_ID = {
+    "running": "Berjalan",
+    "sleeping": "Tidur",
+    "disk-sleep": "Tidur disk",
+    "stopped": "Berhenti",
+    "tracing-stop": "Trace",
+    "zombie": "Zombie",
+    "dead": "Mati",
+    "wake-kill": "Bangun",
+    "waking": "Bangun",
+    "idle": "Idle",
+    "locked": "Terkunci",
+    "waiting": "Menunggu",
+    "suspended": "Suspend",
+    "parked": "Parkir",
+}
+
+
+def wifi_info(iface):
+    info = {}
+    if not iface or iface == "lo":
+        return info
+    if OS_NAME == "Windows":
+        out = run_cmd(["netsh", "wlan", "show", "interfaces"], timeout=4)
+        for line in out.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key, value = key.strip().lower(), value.strip()
+            if key == "ssid":
+                info["ssid"] = value
+            elif key == "signal":
+                info["signal"] = value
+            elif key == "channel":
+                info["freq"] = f"{tr('Kanal')} {value}"
+        return info
+    out = run_cmd(["iw", "dev", iface, "link"])
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("SSID:"):
+            info["ssid"] = line.split(":", 1)[1].strip()
+        elif line.startswith("signal:"):
+            info["signal"] = line.split(":", 1)[1].strip()
+        elif line.startswith("freq:"):
+            m = re.search(r"freq:\s*(\d+)", line)
+            if m:
+                info["freq"] = m.group(1) + " MHz"
+        elif line.startswith("tx bitrate:"):
+            m = re.search(r"tx bitrate:\s*([\d.]+)", line)
+            if m:
+                info["bitrate"] = f"{m.group(1)} Mb/s"
+    if "ssid" not in info:
+        out = run_cmd(["nmcli", "-t", "-f", "active,ssid,signal,chan,freq",
+                       "dev", "wifi"])
+        for line in out.splitlines():
+            parts = line.split(":")
+            if parts and parts[0] == "yes" and len(parts) > 1:
+                info["ssid"] = parts[1]
+                if len(parts) > 2:
+                    info["signal"] = parts[2] + " %"
+                break
+    return info
+
+
+def install_styles(root):
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+    style.configure("Dark.Treeview",
+                    background=CARD, fieldbackground=CARD, foreground=TEXT,
+                    borderwidth=0, rowheight=26, font=(FONT, 10))
+    style.configure("Dark.Treeview.Heading", background=CARD_DARK,
+                    foreground=MUTED, relief="flat", borderwidth=0,
+                    font=(FONT, 9, "bold"))
+    style.map("Dark.Treeview", background=[("selected", ACCENT)],
+              foreground=[("selected", "#ffffff")])
+    style.map("Dark.Treeview.Heading", background=[("active", BORDER)])
+    style.configure("Dark.Vertical.TScrollbar", background=BORDER,
+                    troughcolor=BG, bordercolor=BG, arrowcolor=MUTED,
+                    lightcolor=BORDER, darkcolor=BORDER, width=10)
+    for name, col in (("Green", GREEN), ("Orange", ORANGE), ("Red", PINK)):
+        style.configure(f"{name}.Horizontal.TProgressbar", troughcolor=TRACK,
+                        background=col, bordercolor=CARD, lightcolor=col,
+                        darkcolor=col, thickness=8)
+    style.configure("TCombobox", fieldbackground=CARD, background=CARD)
+
+
+def main():
+    start = "performance"
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--page" and i + 1 < len(args):
+            start = args[i + 1]
+        elif a.startswith("--page="):
+            start = a.split("=", 1)[1]
+        elif a in ("-h", "--help"):
+            print(f"{APP_NAME} v{VERSION}")
+            print("Pemakaian: diknom-monitor [--page performance|hardware|"
+                  "processes|storage|network|settings|about]")
+            return 0
+        elif a in ("-v", "--version"):
+            print(f"{APP_NAME} v{VERSION}")
+            return 0
+    app = App(start_page=start)
+    app.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
