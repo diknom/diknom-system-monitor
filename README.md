@@ -47,7 +47,7 @@ diurutkan per kolom, dan diakhiri dengan konfirmasi.
 
 ![Processes — DSM](assets/screenshots/processes.png)
 
-> Screenshot memakai data contoh. Alamat IP dan nama Wi-Fi disamarkan.
+> Screenshot diambil dari mesin uji. Alamat IP dan nama Wi-Fi disamarkan.
 
 ---
 
@@ -409,7 +409,7 @@ MIT — lihat [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <strong>DSM (DikNom System Monitor) v1.0</strong><br>
+  <strong>DSM (DikNom System Monitor) V1.0</strong><br>
   Developer: <strong>DikNom</strong><br>
   Dibuat untuk membantu memantau sistem dengan ringan.
 </p>
